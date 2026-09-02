@@ -135,9 +135,8 @@
 
     bool SymbolMatch(string s)
     {
-        var a = Symbol.Replace("-", "").ToUpperInvariant();
-        var b = s.Replace("-", "").ToUpperInvariant();
-        return a == b;
+        static string Norm(string x) => x.Replace("-", "").Replace("_", "").ToUpperInvariant();
+        return Norm(Symbol) == Norm(s);
     }
 
     static int DepthPct(decimal q, decimal max) => (int)Math.Min(100, q / max * 100);

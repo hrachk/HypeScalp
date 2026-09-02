@@ -64,11 +64,16 @@ public class MarketDataHub : IAsyncDisposable
 
     private static string NormalizeSymbol(ExchangeType ex, string symbol)
     {
-        symbol = symbol.Trim().ToUpperInvariant();
+        symbol = symbol.Trim().ToUpperInvariant().Replace("-", "_");
         return ex switch
         {
-            ExchangeType.Okx => symbol.Contains('-') ? symbol : symbol.Replace("USDT", "-USDT"),
-            _ => symbol.Replace("-", "")
+            ExchangeType.Okx => symbol.Contains('_')
+                ? symbol.Replace("_", "-")
+                : symbol.Replace("USDT", "-USDT"),
+            ExchangeType.Gate => symbol.Contains('_')
+                ? symbol
+                : symbol.Replace("USDT", "_USDT"),
+            _ => symbol.Replace("_", "").Replace("-", "")
         };
     }
 
@@ -84,6 +89,9 @@ public class MarketDataHub : IAsyncDisposable
                 ? "wss://stream.bybit.com/v5/public/linear"
                 : "wss://stream.bybit.com/v5/public/spot",
             ExchangeType.Okx => "wss://ws.okx.com:8443/ws/v5/public",
+            ExchangeType.Gate => futures
+                ? "wss://fx-ws.gateio.ws/v4/ws/usdt"
+                : "wss://api.gateio.ws/ws/v4/",
             _ => null
         };
     }
@@ -150,8 +158,36 @@ public class MarketDataHub : IAsyncDisposable
                     new { channel = "trades", instId = sub.Symbol }
                 }
             }),
+            ExchangeType.Gate => null, // sent as two messages below
             _ => null // Binance uses URL streams
         };
+        if (sub.Exchange == ExchangeType.Gate)
+        {
+            var contract = sub.Symbol; // BTC_USDT
+            var channelBook = sub.Futures ? "futures.order_book" : "spot.order_book";
+            var channelTrade = sub.Futures ? "futures.trades" : "spot.trades";
+            var t = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            // order book: payload [contract, level, interval]
+            var bookMsg = JsonSerializer.Serialize(new
+            {
+                time = t,
+                channel = channelBook,
+                @event = "subscribe",
+                payload = sub.Futures
+                    ? new object[] { contract, "20", "0" }
+                    : new object[] { contract, "20", "100ms" }
+            });
+            var tradeMsg = JsonSerializer.Serialize(new
+            {
+                time = t,
+                channel = channelTrade,
+                @event = "subscribe",
+                payload = new[] { contract }
+            });
+            await ws.SendAsync(Encoding.UTF8.GetBytes(bookMsg), WebSocketMessageType.Text, true, sub.Cts.Token);
+            await ws.SendAsync(Encoding.UTF8.GetBytes(tradeMsg), WebSocketMessageType.Text, true, sub.Cts.Token);
+            return;
+        }
         if (msg == null) return;
         var bytes = Encoding.UTF8.GetBytes(msg);
         await ws.SendAsync(bytes, WebSocketMessageType.Text, true, sub.Cts.Token);
@@ -174,6 +210,9 @@ public class MarketDataHub : IAsyncDisposable
                     break;
                 case ExchangeType.Okx:
                     HandleOkx(sub, root);
+                    break;
+                case ExchangeType.Gate:
+                    HandleGate(sub, root);
                     break;
             }
         }
@@ -281,6 +320,63 @@ public class MarketDataHub : IAsyncDisposable
         };
         OnTrade?.Invoke(sub.Symbol, tick);
         OnTrade?.Invoke(sub.Key, tick);
+    }
+
+
+    private void HandleGate(Subscription sub, JsonElement root)
+    {
+        // { channel, event, result }
+        if (!root.TryGetProperty("channel", out var chEl)) return;
+        var channel = chEl.GetString() ?? "";
+        if (!root.TryGetProperty("result", out var result)) return;
+        // ignore subscribe acks
+        if (root.TryGetProperty("event", out var ev) && ev.GetString() == "subscribe") return;
+
+        if (channel.Contains("order_book", StringComparison.Ordinal))
+        {
+            // result: { t, contract/currency_pair, bids:[[p,s]], asks:[[p,s]] } or array update
+            var book = result.ValueKind == JsonValueKind.Array && result.GetArrayLength() > 0
+                ? result[0]
+                : result;
+            var bids = ParseGateSides(book, "bids");
+            var asks = ParseGateSides(book, "asks");
+            if (bids.Count > 0 || asks.Count > 0)
+                RaiseBook(sub, bids, asks);
+        }
+        else if (channel.Contains("trades", StringComparison.Ordinal))
+        {
+            // result is array of trades
+            var trades = result.ValueKind == JsonValueKind.Array ? result : default;
+            if (trades.ValueKind != JsonValueKind.Array) return;
+            foreach (var t in trades.EnumerateArray())
+            {
+                var price = t.TryGetProperty("price", out var px) ? Dec(px) : 0;
+                var qty = t.TryGetProperty("size", out var sz) ? Math.Abs(Dec(sz))
+                    : t.TryGetProperty("amount", out var am) ? Math.Abs(Dec(am)) : 0;
+                if (price == 0) continue;
+                // Gate futures: size > 0 buy, < 0 sell; spot: side take / make
+                bool isBuy;
+                if (t.TryGetProperty("size", out var sizeEl))
+                    isBuy = Dec(sizeEl) > 0;
+                else if (t.TryGetProperty("side", out var sideEl))
+                    isBuy = string.Equals(sideEl.GetString(), "buy", StringComparison.OrdinalIgnoreCase);
+                else
+                    isBuy = true;
+                RaiseTrade(sub, price, qty, isBuy);
+            }
+        }
+    }
+
+    private static List<OrderBookLevel> ParseGateSides(JsonElement book, string name)
+    {
+        var list = new List<OrderBookLevel>();
+        if (!book.TryGetProperty(name, out var arr) || arr.ValueKind != JsonValueKind.Array) return list;
+        foreach (var x in arr.EnumerateArray())
+        {
+            if (x.ValueKind == JsonValueKind.Array && x.GetArrayLength() >= 2)
+                list.Add(new OrderBookLevel { Price = Dec(x[0]), Quantity = Math.Abs(Dec(x[1])) });
+        }
+        return list;
     }
 
     private static List<OrderBookLevel> ParseLevels(JsonElement data, string name)
