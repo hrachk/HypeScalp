@@ -203,25 +203,25 @@
     {
         _busy = true;
         var side = isBid ? OrderSide.Buy : OrderSide.Sell;
-        var (ok, msg, _) = await Trading.PlaceLimitAsync(Symbol, side, Qty, price, Exchange);
+        var r = await Trading.PlaceLimitAsync(Symbol, side, Qty, price, Exchange);
         _busy = false;
-        await JS.InvokeVoidAsync("showToast", ok ? msg : $"ERR: {msg}");
+        await JS.InvokeVoidAsync("showToast", r.IsOk ? r.Message : $"ERR: {r.Message}");
     }
 
     async Task OnBuy()
     {
         _busy = true;
-        var (ok, msg, _) = await Trading.PlaceMarketAsync(Symbol, OrderSide.Buy, Qty, Exchange);
+        var r = await Trading.PlaceMarketAsync(Symbol, OrderSide.Buy, Qty, Exchange);
         _busy = false;
-        await JS.InvokeVoidAsync("showToast", ok ? msg : $"ERR: {msg}");
+        await JS.InvokeVoidAsync("showToast", r.IsOk ? r.Message : $"ERR: {r.Message}");
     }
 
     async Task OnSell()
     {
         _busy = true;
-        var (ok, msg, _) = await Trading.PlaceMarketAsync(Symbol, OrderSide.Sell, Qty, Exchange);
+        var r = await Trading.PlaceMarketAsync(Symbol, OrderSide.Sell, Qty, Exchange);
         _busy = false;
-        await JS.InvokeVoidAsync("showToast", ok ? msg : $"ERR: {msg}");
+        await JS.InvokeVoidAsync("showToast", r.IsOk ? r.Message : $"ERR: {r.Message}");
     }
 
     public void Dispose()

@@ -1,6 +1,6 @@
 @page "/settings"
 @rendermode InteractiveServer
-@inject SettingsService Settings
+@inject SettingsService SettingsSvc
 @inject ConnectionManager ConnMgr
 @inject IJSRuntime JS
 
@@ -17,7 +17,7 @@
                 SAVED CONNECTIONS
             </div>
             <ul class="conn-list">
-                @foreach (var c in Settings.Settings.Connections)
+                @foreach (var c in SettingsSvc.Settings.Connections)
                 {
                     <li class="conn-item" @onclick="() => _selected = c" style="@(_selected?.Id==c.Id?"background:rgba(0,245,212,0.08)":"")">
                         <div class="status @(c.Status==ConnectionStatus.Connected?"connected":c.Status==ConnectionStatus.Error?"error":"")"></div>
@@ -27,7 +27,7 @@
                         </div>
                     </li>
                 }
-                @if (!Settings.Settings.Connections.Any())
+                @if (!SettingsSvc.Settings.Connections.Any())
                 {
                     <li style="padding:16px;color:var(--text-muted)">Пока нет подключений</li>
                 }
@@ -123,8 +123,8 @@
             Proxy = string.IsNullOrWhiteSpace(_proxy) ? null : _proxy.Trim(),
             IsTestnet = _testnet
         };
-        Settings.Settings.Connections.Add(conn);
-        await Settings.SaveAsync();
+        SettingsSvc.Settings.Connections.Add(conn);
+        await SettingsSvc.SaveAsync();
         _selected = conn;
         _name = _apiKey = _apiSecret = _passphrase = _proxy = "";
         _msg = $"Added: {conn.Name}";
@@ -151,8 +151,8 @@
     {
         if (_selected == null) return;
         await ConnMgr.DisconnectAsync(_selected.Id);
-        Settings.Settings.Connections.RemoveAll(c => c.Id == _selected.Id);
-        await Settings.SaveAsync();
+        SettingsSvc.Settings.Connections.RemoveAll(c => c.Id == _selected.Id);
+        await SettingsSvc.SaveAsync();
         _msg = "Removed";
         _selected = null;
     }
