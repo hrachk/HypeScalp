@@ -204,6 +204,38 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
   transform: translateY(8px); transition: .2s; z-index: 9999; pointer-events: none; max-width: 360px;
 }
 .toast.show { opacity: 1; transform: translateY(0); }
+
+.chart-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
+.chart-toolbar {
+  display:flex; gap:6px; padding:4px 8px; border-bottom:1px solid var(--border);
+  align-items:center; flex-wrap:wrap; font-size:10px; color:var(--dim);
+}
+.chart-toolbar label { display:flex; align-items:center; gap:3px; cursor:pointer; }
+.chart-toolbar canvas-area, .chart-area { flex:1; min-height:0; position:relative; }
+.chart-area canvas { width:100%; height:100%; display:block; }
+.tf-btn {
+  padding:2px 7px; border-radius:4px; border:1px solid var(--border);
+  background:transparent; color:var(--dim); font-size:10px; cursor:pointer; font-family:var(--mono);
+}
+.tf-btn.active { color:var(--cyan); border-color:rgba(0,245,212,.4); background:rgba(0,245,212,.1); }
+.new-menu {
+  position:absolute; top:44px; right:120px; width:240px; background:var(--panel);
+  border:1px solid var(--border); border-radius:8px; padding:6px 0; z-index:300;
+  display:none; box-shadow:0 12px 40px rgba(0,0,0,.5);
+}
+.new-menu.show { display:block; }
+.new-menu-item {
+  padding:8px 14px; cursor:pointer; font-size:12px; color:var(--text);
+}
+.new-menu-item:hover { background:rgba(0,245,212,.1); color:var(--cyan); }
+.tape-global { flex:1; overflow:auto; font-family:var(--mono); font-size:11px; }
+.tape-global .row {
+  display:grid; grid-template-columns:56px 70px 1fr 60px; gap:6px;
+  padding:4px 8px; border-bottom:1px solid var(--border);
+}
+.tape-global .buy { color:var(--cyan); }
+.tape-global .sell { color:var(--magenta); }
+
 </style>
 </head>
 <body>
@@ -223,10 +255,21 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
       <div class="status-item"><div class="light" id="ltTrade"></div><span id="lbTrade">Trading</span></div>
       <div class="status-item"><div class="light" id="ltAccount"></div><span id="lbAccount">Account</span></div>
     </div>
-    <a class="btn primary" href="/settings">Connections</a>
+    <button class="btn primary" id="btnNewWin">+ Window</button>
+    <a class="btn" href="/settings">Connections</a>
     <button class="btn" id="btnHelp">?</button>
     <button class="btn danger" id="btnFlatten">Flatten</button>
   </div>
+</div>
+
+<div class="new-menu" id="newMenu">
+  <div class="new-menu-item" data-type="chart">📈 Chart</div>
+  <div class="new-menu-item" data-type="multi">⧉ Multi-Exchange Overlay</div>
+  <div class="new-menu-item" data-type="dom">📊 Order Book (DOM)</div>
+  <div class="new-menu-item" data-type="screener">👁 Screener</div>
+  <div class="new-menu-item" data-type="positions">💼 Positions</div>
+  <div class="new-menu-item" data-type="tape">📜 Global Tape</div>
+  <div class="new-menu-item" data-type="hotkeys">⌨️ Hotkeys</div>
 </div>
 
 <div class="workspace" id="workspace">
@@ -236,11 +279,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 <div class="howto" id="howto">
   <h2>Как пользоваться (1 минута)</h2>
   <ol>
-    <li>Нажми <b>Connections</b> → добавь API Key + Secret биржи → <b>Connect</b>.</li>
-    <li>Вернись сюда. Светофор справа: <b>зелёный Trading</b> = можно торговать.</li>
-    <li><b>Market</b> (стакан/лента) работает и без ключей — публичные данные.</li>
-    <li>Кликни окно стакана (станет активным). Выбери объём 0.01 / 0.05 / …</li>
-    <li><b>BUY / SELL</b> = market. Клик по цене в стакане = limit. <b>Esc</b> = снять ордера. <b>X</b> = закрыть позицию.</li>
+    <li><b>+ Window</b> — график, multi-overlay, DOM, tape, positions.</li>
+    <li><b>Connections</b> → API Key + Secret → Connect (зелёный Trading).</li>
+    <li>Сверху multi-график, снизу стаканы. Двойной клик в screener = новый chart.</li>
+    <li>Кликни стакан → объём → BUY/SELL. Клик по цене = limit.</li>
+    <li>Space=Buy · V=Sell · Esc=Cancel · X=Flatten</li>
   </ol>
   <button class="btn primary" id="btnHowToOk" style="width:100%;justify-content:center">Понятно — открыть терминал</button>
 </div>
@@ -622,6 +665,16 @@ function applyTrade(msg){
     tape.insertBefore(row, tape.firstChild);
     while(tape.children.length>30) tape.removeChild(tape.lastChild);
   });
+  (window.__chartWins||[]).forEach(w=>{ if(w._onTrade) w._onTrade(msg); });
+  const gt=document.getElementById('globalTape');
+  if(gt){
+    const row=document.createElement('div');
+    row.className='row '+(msg.buy?'buy':'sell');
+    row.innerHTML=`<div>${msg.buy?'BUY':'SELL'}</div><div>${msg.symbol}</div><div>${fmtP(+msg.price)}</div><div>${fmtQ(+msg.qty)}</div>`;
+    if(gt.children.length>1) gt.insertBefore(row, gt.children[1]);
+    else gt.appendChild(row);
+    while(gt.children.length>40) gt.removeChild(gt.lastChild);
+  }
 }
 
 /* ========== SignalR ========== */
@@ -659,22 +712,214 @@ async function connectFeed(){
   }
 }
 
+
+/* ========== Charts ========== */
+function genCandles(base, n){
+  const arr=[]; let p=base;
+  for(let i=0;i<n;i++){
+    const o=p, c=p+(Math.random()-0.48)*(base*0.0015);
+    const h=Math.max(o,c)+Math.random()*(base*0.0008);
+    const l=Math.min(o,c)-Math.random()*(base*0.0008);
+    arr.push({o,h,l,c,t:Date.now()-(n-i)*60000});
+    p=c;
+  }
+  return arr;
+}
+function drawCandles(canvas, data, upColor, downColor){
+  upColor=upColor||'#00f5d4'; downColor=downColor||'#ff2e63';
+  const ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  const parent=canvas.parentElement;
+  const W=parent.clientWidth, H=parent.clientHeight;
+  if(W<10||H<10) return;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+  if(!data||!data.length) return;
+  let min=Infinity,max=-Infinity;
+  data.forEach(d=>{ min=Math.min(min,d.l); max=Math.max(max,d.h); });
+  const pad=8, range=max-min||1, barW=(W-pad*2)/data.length;
+  // grid
+  ctx.strokeStyle='rgba(128,128,128,0.08)'; ctx.lineWidth=1;
+  for(let i=1;i<4;i++){ const y=pad+((H-pad*2)/4)*i; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  data.forEach((d,i)=>{
+    const x=pad+i*barW;
+    const yO=pad+(1-(d.o-min)/range)*(H-pad*2);
+    const yC=pad+(1-(d.c-min)/range)*(H-pad*2);
+    const yH=pad+(1-(d.h-min)/range)*(H-pad*2);
+    const yL=pad+(1-(d.l-min)/range)*(H-pad*2);
+    const up=d.c>=d.o;
+    ctx.strokeStyle=up?upColor:downColor;
+    ctx.fillStyle=up?upColor:downColor;
+    ctx.beginPath(); ctx.moveTo(x+barW/2,yH); ctx.lineTo(x+barW/2,yL); ctx.stroke();
+    const bodyTop=Math.min(yO,yC), bodyH=Math.max(1.5,Math.abs(yC-yO));
+    ctx.globalAlpha=0.85;
+    ctx.fillRect(x+0.5, bodyTop, Math.max(1,barW-1.5), bodyH);
+    ctx.globalAlpha=1;
+  });
+}
+function drawOverlay(canvas, series){
+  const ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  const parent=canvas.parentElement;
+  const W=parent.clientWidth, H=parent.clientHeight;
+  if(W<10||H<10) return;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+  if(!series||!series.length) return;
+  let minP=Infinity,maxP=-Infinity,minT=Infinity,maxT=-Infinity;
+  series.forEach(s=>s.points.forEach(pt=>{
+    minP=Math.min(minP,pt.p); maxP=Math.max(maxP,pt.p);
+    minT=Math.min(minT,pt.t); maxT=Math.max(maxT,pt.t);
+  }));
+  const rangeP=maxP-minP||1, rangeT=maxT-minT||1, pad=8;
+  ctx.strokeStyle='rgba(128,128,128,0.08)';
+  for(let i=1;i<4;i++){ const y=pad+((H-pad*2)/4)*i; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  series.forEach(s=>{
+    if(s.points.length<2) return;
+    ctx.beginPath(); ctx.strokeStyle=s.color; ctx.lineWidth=1.5;
+    s.points.forEach((pt,i)=>{
+      const x=((pt.t-minT)/rangeT)*(W-pad*2)+pad;
+      const y=pad+(1-(pt.p-minP)/rangeP)*(H-pad*2);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  });
+  let lx=10;
+  series.forEach(s=>{
+    ctx.fillStyle=s.color; ctx.fillRect(lx,6,12,3);
+    ctx.fillStyle='#8b92a5'; ctx.font='10px sans-serif'; ctx.fillText(s.name, lx+16,10);
+    lx+=ctx.measureText(s.name).width+36;
+  });
+}
+
+function openChart(sym, ex, multi){
+  sym=sym||Trade.symbol; ex=ex||Trade.exchange;
+  const base=sym.startsWith('BTC')?95000:sym.startsWith('ETH')?3400:150;
+  const candles=genCandles(base, 80);
+  const series=[
+    {name:'Binance', color:'#f0b90b', points:[], on:true},
+    {name:'Bybit', color:'#f7a600', points:[], on:!!multi},
+    {name:'OKX', color:'#8888cc', points:[], on:!!multi},
+  ];
+  // seed lines from candles close
+  candles.forEach((c,i)=>{
+    const t=c.t;
+    series[0].points.push({t,p:c.c});
+    if(multi){
+      series[1].points.push({t,p:c.c*(1+0.0002*Math.sin(i/5))});
+      series[2].points.push({t,p:c.c*(1-0.00015*Math.cos(i/7))});
+    }
+  });
+  const title = multi
+    ? `${sym} <span class="tag">MULTI OVERLAY</span>`
+    : `${sym} <span class="tag">${ex} · CHART</span>`;
+  const win=createWin({
+    id:'chart-'+sym+'-'+Date.now(), title,
+    x:240, y:8, w: multi?640:520, h: multi?300:340,
+    bodyHtml:`
+      <div class="chart-wrap">
+        <div class="chart-toolbar">
+          <button class="tf-btn active" data-tf="1s">1s</button>
+          <button class="tf-btn" data-tf="5s">5s</button>
+          <button class="tf-btn" data-tf="1m">1m</button>
+          <button class="tf-btn" data-tf="5m">5m</button>
+          <button class="tf-btn" data-tf="15m">15m</button>
+          ${multi?`
+          <label><input type="checkbox" data-ex="0" checked/> Binance</label>
+          <label><input type="checkbox" data-ex="1" checked/> Bybit</label>
+          <label><input type="checkbox" data-ex="2" checked/> OKX</label>`:''}
+          <span style="margin-left:auto;font-family:var(--mono);color:var(--lime)" class="lastPx">—</span>
+        </div>
+        <div class="chart-area"><canvas></canvas></div>
+      </div>`
+  });
+  const canvas=win.querySelector('canvas');
+  const redraw=()=>{
+    if(multi){
+      const on=series.filter((s,i)=>{
+        const cb=win.querySelector(`input[data-ex="${i}"]`);
+        return !cb || cb.checked;
+      });
+      drawOverlay(canvas, on);
+    } else drawCandles(canvas, candles);
+  };
+  canvas._redraw=redraw;
+  setTimeout(redraw, 30);
+  win.querySelectorAll('.tf-btn').forEach(b=>{
+    b.onclick=()=>{
+      win.querySelectorAll('.tf-btn').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      showToast('TF · '+b.dataset.tf+' (visual)');
+      redraw();
+    };
+  });
+  win.querySelectorAll('input[data-ex]').forEach(cb=>cb.onchange=redraw);
+  // live last price from trades
+  win._onTrade=function(msg){
+    if(norm(msg.symbol)!==norm(sym)) return;
+    const px=Number(msg.price);
+    const el=win.querySelector('.lastPx'); if(el) el.textContent=fmtP(px);
+    if(multi){
+      const t=Date.now();
+      series[0].points.push({t,p:px});
+      if(series[0].points.length>200) series[0].points.shift();
+      if(series[1].on){ series[1].points.push({t,p:px*(1+0.0001)}); if(series[1].points.length>200) series[1].points.shift(); }
+      if(series[2].on){ series[2].points.push({t,p:px*(1-0.0001)}); if(series[2].points.length>200) series[2].points.shift(); }
+      redraw();
+    } else {
+      const last=candles[candles.length-1];
+      last.c=px; last.h=Math.max(last.h,px); last.l=Math.min(last.l,px);
+      redraw();
+    }
+  };
+  window.__chartWins=window.__chartWins||[];
+  window.__chartWins.push(win);
+  return win;
+}
+
+function openTape(){
+  const win=createWin({
+    id:'gtape', title:'GLOBAL TAPE <span class="tag">ALL</span>',
+    x:920, y:280, w:320, h:240,
+    bodyHtml:`<div class="tape-global" id="globalTape">
+      <div class="row" style="color:var(--muted)"><div>Side</div><div>Symbol</div><div>Price</div><div>Size</div></div>
+    </div>`
+  });
+  return win;
+}
+
+function openDomDialog(){
+  const sym=prompt('Symbol (e.g. BTCUSDT)', Trade.symbol||'BTCUSDT');
+  if(!sym) return;
+  const ex=prompt('Exchange (Binance/Bybit/OKX/Gate)', Trade.exchange||'Binance')||'Binance';
+  buildDom(sym.trim().toUpperCase(), ex.trim(), 300, 60);
+  Trade.setContext(sym.trim().toUpperCase(), ex.trim());
+}
+
+
 /* ========== Init ========== */
 function initLayout(){
   buildScreener();
-  buildDom('BTCUSDT','Binance', 240, 8);
-  buildDom('ETHUSDT','Binance', 590, 8);
+  openChart('BTCUSDT','Binance', true);   // multi overlay chart
+  buildDom('BTCUSDT','Binance', 240, 320);
+  buildDom('ETHUSDT','Binance', 590, 320);
   buildPositions();
   buildHelpPanel();
 
-  // screener clicks
   document.getElementById('scrList').addEventListener('click', e=>{
     const row=e.target.closest('.scr-row');
     if(!row) return;
     document.querySelectorAll('.scr-row').forEach(r=>r.classList.remove('active'));
     row.classList.add('active');
     Trade.setContext(row.dataset.sym, row.dataset.ex);
-    showToast('Focus · '+row.dataset.sym);
+    showToast('Focus · '+row.dataset.sym+' · dblclick = chart');
+  });
+  document.getElementById('scrList').addEventListener('dblclick', e=>{
+    const row=e.target.closest('.scr-row');
+    if(!row) return;
+    openChart(row.dataset.sym, row.dataset.ex, false);
   });
 }
 
@@ -699,6 +944,30 @@ Status.set('ltMarket','red','Market');
 Status.set('ltTrade','red','No API');
 Status.set('ltAccount','red','Account');
 initLayout();
+
+// + Window menu
+$('btnNewWin').onclick = e=>{
+  e.stopPropagation();
+  $('newMenu').classList.toggle('show');
+};
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#newMenu') && !e.target.closest('#btnNewWin'))
+    $('newMenu').classList.remove('show');
+});
+$('newMenu').onclick = e=>{
+  const item=e.target.closest('.new-menu-item');
+  if(!item) return;
+  const type=item.dataset.type;
+  $('newMenu').classList.remove('show');
+  if(type==='chart') openChart(Trade.symbol, Trade.exchange, false);
+  if(type==='multi') openChart(Trade.symbol, Trade.exchange, true);
+  if(type==='dom') openDomDialog();
+  if(type==='screener') buildScreener();
+  if(type==='positions') buildPositions();
+  if(type==='tape') openTape();
+  if(type==='hotkeys') buildHelpPanel();
+};
+
 connectFeed();
 Trade.refreshStatus();
 setInterval(()=>Trade.refreshStatus(), 10000);
