@@ -1,70 +1,155 @@
 @rendermode InteractiveServer
+@inject MarketDataHub Market
+@inject IJSRuntime JS
+@implements IDisposable
 
 <div class="dom-body">
     <div class="clusters-col">
         @foreach (var c in _clusters)
         {
-            <div style="height:17px;display:flex;align-items:center;justify-content:center;color:@(c.StartsWith("+")?"var(--lime)":"var(--magenta)")">@c</div>
+            <div class="cluster-cell @(c.Delta >= 0 ? "delta-pos" : "delta-neg")" style="height:17px;display:flex;align-items:center;justify-content:center;position:relative">
+                <div style="position:absolute;left:0;top:0;bottom:0;opacity:0.3;width:@Math.Min(100, Math.Abs(c.Delta) * 3)%;background:@(c.Delta >= 0 ? "var(--bid)" : "var(--ask)")"></div>
+                <span style="z-index:1;color:@(c.Delta >= 0 ? "var(--lime)" : "var(--magenta)")">@(c.Delta >= 0 ? "+" : "")@c.Delta.ToString("F1")</span>
+            </div>
         }
     </div>
-    <div class="ladder-col">
-        @foreach (var l in _levels)
+    <div class="ladder-col" @ref="_ladderRef">
+        @foreach (var l in _asks)
         {
-            <div class="level @l.Side">
-                <span class="price">@l.Price</span>
-                <span style="text-align:right;color:var(--text-dim)">@l.Qty</span>
+            <div class="level ask @(l.IsWall ? "wall" : "")" @onclick="() => OnLevelClick(l.Price, false)">
+                <div class="depth-bar" style="width:@DepthPct(l.Quantity, _maxAsk)%;background:var(--ask);opacity:@(l.IsWall?0.4:0.18)"></div>
+                <span class="price">@FormatPrice(l.Price)</span>
+                <span style="text-align:right;color:var(--text-dim);font-size:10px">@FormatQty(l.Quantity)</span>
+            </div>
+        }
+        <div class="level mid">
+            <span class="price">@FormatPrice(_mid)</span>
+            <span style="text-align:right;color:var(--spread);font-size:9px">@(_spread.ToString("F2"))</span>
+        </div>
+        @foreach (var l in _bids)
+        {
+            <div class="level bid @(l.IsWall ? "wall" : "")" @onclick="() => OnLevelClick(l.Price, true)">
+                <div class="depth-bar" style="width:@DepthPct(l.Quantity, _maxBid)%;background:var(--bid);opacity:@(l.IsWall?0.4:0.18)"></div>
+                <span class="price">@FormatPrice(l.Price)</span>
+                <span style="text-align:right;color:var(--text-dim);font-size:10px">@FormatQty(l.Quantity)</span>
             </div>
         }
     </div>
     <div class="tape-col">
         @foreach (var t in _tape)
         {
-            <div style="height:17px;padding:0 4px;display:flex;align-items:center;color:@(t.Buy?"var(--bid)":"var(--ask)")">
-                @(t.Buy?"▲":"▼") @t.Sz
+            <div style="height:17px;padding:0 4px;display:flex;align-items:center;justify-content:space-between;@(t.IsLarge?"background:rgba(255,159,28,0.12)":"")"
+                 class="@(t.IsBuy?"buy":"sell")">
+                <span style="color:@(t.IsBuy?"var(--bid)":"var(--ask)");font-weight:600">@(t.IsBuy?"▲":"▼") @FormatQty(t.Quantity)</span>
+                <span style="color:var(--text-dim);font-size:9px">@FormatPrice(t.Price)</span>
             </div>
         }
     </div>
 </div>
 <div class="dom-footer">
-    <button class="vol-btn active">0.01</button>
-    <button class="vol-btn">0.05</button>
-    <button class="vol-btn">0.1</button>
-    <button class="vol-btn">0.5</button>
+    @foreach (var v in _vols)
+    {
+        <button class="vol-btn @(_activeVol == v ? "active" : "")" @onclick="() => _activeVol = v">@v</button>
+    }
     <button class="trade-btn buy" @onclick="OnBuy">BUY</button>
     <button class="trade-btn sell" @onclick="OnSell">SELL</button>
+    <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-dim)">
+        @(_live ? "LIVE" : "…") @Symbol
+    </span>
 </div>
 
 @code {
     [Parameter] public string Symbol { get; set; } = "BTCUSDT";
-    [Parameter] public double Mid { get; set; } = 100;
+    [Parameter] public bool Futures { get; set; } = true;
 
-    [Inject] IJSRuntime JS { get; set; } = default!;
+    ElementReference _ladderRef;
+    bool _live;
+    decimal _mid, _spread, _maxAsk = 1, _maxBid = 1;
+    List<OrderBookLevel> _asks = new();
+    List<OrderBookLevel> _bids = new();
+    List<TradeTick> _tape = new();
+    List<(decimal Delta)> _clusters = new();
+    readonly string[] _vols = { "0.01", "0.05", "0.1", "0.5" };
+    string _activeVol = "0.01";
+    readonly object _lock = new();
+    DateTime _lastClusterBucket = DateTime.UtcNow;
+    decimal _clusterBuy, _clusterSell;
 
-    record Level(string Price, string Qty, string Side);
-    record TapeItem(bool Buy, string Sz);
-
-    List<string> _clusters = new();
-    List<Level> _levels = new();
-    List<TapeItem> _tape = new();
-
-    protected override void OnParametersSet()
+    protected override async Task OnInitializedAsync()
     {
-        var rnd = new Random(Symbol.GetHashCode());
-        _levels.Clear();
-        for (int i = 10; i >= 1; i--)
-            _levels.Add(new((Mid + i * 0.5).ToString("F1"), (rnd.NextDouble() * 4).ToString("F2"), "ask"));
-        _levels.Add(new(Mid.ToString("F1"), "SPR", "mid"));
-        for (int i = 1; i <= 10; i++)
-            _levels.Add(new((Mid - i * 0.5).ToString("F1"), (rnd.NextDouble() * 4).ToString("F2"), "bid"));
-
-        _clusters = Enumerable.Range(0, 22).Select(_ =>
-            (rnd.NextDouble() > 0.5 ? "+" : "-") + (rnd.NextDouble() * 18).ToString("F1")).ToList();
-        _tape = Enumerable.Range(0, 18).Select(_ =>
-            new TapeItem(rnd.NextDouble() > 0.5, (rnd.NextDouble() * 1.2).ToString("F3"))).ToList();
+        Market.OnOrderBook += HandleBook;
+        Market.OnTrade += HandleTrade;
+        await Market.SubscribeAsync(Symbol, Futures);
+        SeedMock();
     }
 
-    async Task OnBuy() => await Toast("BUY market");
-    async Task OnSell() => await Toast("SELL market");
+    void SeedMock()
+    {
+        var rnd = new Random(Symbol.GetHashCode());
+        var mid = Symbol.StartsWith("BTC") ? 95000m : Symbol.StartsWith("ETH") ? 3400m : 150m;
+        _mid = mid;
+        for (int i = 10; i >= 1; i--)
+            _asks.Add(new OrderBookLevel { Price = mid + i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
+        for (int i = 1; i <= 10; i++)
+            _bids.Add(new OrderBookLevel { Price = mid - i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
+        _clusters = Enumerable.Range(0, 20).Select(_ => (Delta: (decimal)((rnd.NextDouble() - 0.5) * 20))).ToList();
+    }
 
-    async Task Toast(string msg) => await JS.InvokeVoidAsync("showToast", $"{msg} · {Symbol}");
+    void HandleBook(string symbol, OrderBookSnapshot snap)
+    {
+        if (!symbol.Equals(Symbol, StringComparison.OrdinalIgnoreCase)) return;
+        lock (_lock)
+        {
+            _asks = snap.Asks.Take(12).ToList();
+            _bids = snap.Bids.Take(12).ToList();
+            _maxAsk = Math.Max(0.0001m, _asks.Count > 0 ? _asks.Max(a => a.Quantity) : 1);
+            _maxBid = Math.Max(0.0001m, _bids.Count > 0 ? _bids.Max(b => b.Quantity) : 1);
+            _mid = snap.BestBid > 0 && snap.BestAsk > 0 ? (snap.BestBid + snap.BestAsk) / 2 : _mid;
+            _spread = snap.Spread;
+            _live = true;
+        }
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    void HandleTrade(string symbol, TradeTick t)
+    {
+        if (!symbol.Equals(Symbol, StringComparison.OrdinalIgnoreCase)) return;
+        lock (_lock)
+        {
+            _tape.Insert(0, t);
+            if (_tape.Count > 40) _tape.RemoveAt(_tape.Count - 1);
+
+            // 1s clusters
+            if (t.IsBuy) _clusterBuy += t.Quantity;
+            else _clusterSell += t.Quantity;
+            if ((DateTime.UtcNow - _lastClusterBucket).TotalSeconds >= 1)
+            {
+                var delta = _clusterBuy - _clusterSell;
+                _clusters.Insert(0, (delta));
+                if (_clusters.Count > 24) _clusters.RemoveAt(_clusters.Count - 1);
+                _clusterBuy = _clusterSell = 0;
+                _lastClusterBucket = DateTime.UtcNow;
+            }
+        }
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    static int DepthPct(decimal q, decimal max) => (int)Math.Min(100, q / max * 100);
+    static string FormatPrice(decimal p) => p >= 1000 ? p.ToString("F1") : p >= 1 ? p.ToString("F2") : p.ToString("G6");
+    static string FormatQty(decimal q) => q >= 100 ? q.ToString("F1") : q.ToString("F3");
+
+    async Task OnLevelClick(decimal price, bool isBid)
+    {
+        var side = isBid ? "BUY limit" : "SELL limit";
+        await JS.InvokeVoidAsync("showToast", $"{side} @ {FormatPrice(price)} · {_activeVol} · {Symbol}");
+    }
+
+    async Task OnBuy() => await JS.InvokeVoidAsync("showToast", $"BUY market {_activeVol} · {Symbol}");
+    async Task OnSell() => await JS.InvokeVoidAsync("showToast", $"SELL market {_activeVol} · {Symbol}");
+
+    public void Dispose()
+    {
+        Market.OnOrderBook -= HandleBook;
+        Market.OnTrade -= HandleTrade;
+    }
 }

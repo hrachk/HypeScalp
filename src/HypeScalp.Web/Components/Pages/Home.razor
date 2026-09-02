@@ -7,13 +7,12 @@
     <div class="win active" style="left:8px;top:8px;width:240px;height:420px">
         <div class="win-header">
             <div class="win-title">SCREENER</div>
-            <button class="win-btn close" @onclick="() => { }">✕</button>
         </div>
         <div class="win-body" style="overflow:auto">
             @foreach (var p in _pairs)
             {
                 <div style="display:grid;grid-template-columns:1fr 60px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer"
-                     @onclick="() => OpenDom(p.Sym)">
+                     @onclick="() => Select(p.Sym)">
                     <div>
                         <div style="font-weight:600">@p.Sym</div>
                         <div style="font-size:9px;color:var(--text-muted)">@p.Ex</div>
@@ -24,56 +23,49 @@
         </div>
     </div>
 
-    <!-- Multi chart placeholder -->
+    <!-- Multi overlay chart -->
     <div class="win" style="left:260px;top:8px;width:640px;height:280px">
         <div class="win-header">
-            <div class="win-title">BTCUSDT <span class="badge">MULTI OVERLAY</span></div>
-            <button class="win-btn">□</button>
-            <button class="win-btn close">✕</button>
+            <div class="win-title">@_symbol <span class="badge">MULTI OVERLAY · LIVE</span></div>
         </div>
-        <div class="win-body" style="align-items:center;justify-content:center;display:flex;color:var(--text-muted)">
-            Chart · 1s / 5s / Overlay (Binance + Bybit + OKX) — connect WebSocket feeds
+        <div class="win-body">
+            <ChartOverlay Symbol="@_symbol" />
         </div>
     </div>
 
-    <!-- DOM 1 -->
-    <div class="win" style="left:260px;top:300px;width:340px;height:380px">
+    <!-- Live DOM BTC -->
+    <div class="win" style="left:260px;top:300px;width:360px;height:400px">
         <div class="win-header">
-            <div class="win-title">BTCUSDT <span class="badge">BINANCE</span></div>
-            <button class="win-btn close">✕</button>
+            <div class="win-title">BTCUSDT <span class="badge">BINANCE WS</span></div>
         </div>
         <div class="win-body">
-            <DomPanel Symbol="BTCUSDT" Mid="67840"/>
+            <DomPanel Symbol="BTCUSDT" Futures="true" />
         </div>
     </div>
 
-    <!-- DOM 2 -->
-    <div class="win" style="left:610px;top:300px;width:340px;height:380px">
+    <!-- Live DOM ETH -->
+    <div class="win" style="left:630px;top:300px;width:360px;height:400px">
         <div class="win-header">
-            <div class="win-title">ETHUSDT <span class="badge">BYBIT</span></div>
-            <button class="win-btn close">✕</button>
+            <div class="win-title">ETHUSDT <span class="badge">BINANCE WS</span></div>
         </div>
         <div class="win-body">
-            <DomPanel Symbol="ETHUSDT" Mid="3420"/>
+            <DomPanel Symbol="ETHUSDT" Futures="true" />
         </div>
     </div>
 
     <!-- Positions -->
-    <div class="win" style="left:960px;top:8px;width:280px;height:280px">
+    <div class="win" style="left:1000px;top:8px;width:280px;height:280px">
         <div class="win-header">
             <div class="win-title">POSITIONS</div>
         </div>
-        <div class="win-body" style="overflow:auto;padding:8px">
-            <div style="padding:8px;border-bottom:1px solid var(--border)">
-                <div style="font-weight:600">BTCUSDT</div>
-                <div style="font-size:10px;color:var(--lime)">LONG · —</div>
-            </div>
-            <div style="padding:8px;color:var(--text-muted);font-size:11px">Connect exchange to load positions</div>
+        <div class="win-body" style="overflow:auto;padding:8px;color:var(--text-muted);font-size:11px">
+            Connect API key in Connections to load account positions.
         </div>
     </div>
 </div>
 
 @code {
+    string _symbol = "BTCUSDT";
     record Pair(string Sym, string Ex, string Chg);
     List<Pair> _pairs = new()
     {
@@ -86,8 +78,9 @@
         new("NEARUSDT","MEXC","+3.41%"),
     };
 
-    async Task OpenDom(string sym)
+    async Task Select(string sym)
     {
-        await JS.InvokeVoidAsync("showToast", $"Open DOM · {sym}");
+        _symbol = sym;
+        await JS.InvokeVoidAsync("showToast", $"Focus · {sym}");
     }
 }

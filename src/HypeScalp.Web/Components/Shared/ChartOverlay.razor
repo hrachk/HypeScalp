@@ -1,0 +1,108 @@
+@rendermode InteractiveServer
+@inject IJSRuntime JS
+@inject MarketDataHub Market
+@implements IDisposable
+
+<div class="chart-wrap" style="display:flex;flex-direction:column;height:100%">
+    <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap">
+        @foreach (var ex in _exchanges)
+        {
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10px;color:@(ex.On?"var(--cyan)":"var(--text-dim)")">
+                <input type="checkbox" checked="@ex.On" @onchange="e => ToggleEx(ex, e)" />
+                <span style="width:8px;height:8px;border-radius:50%;background:@ex.Color;display:inline-block"></span>
+                @ex.Name
+            </label>
+        }
+        <span style="margin-left:8px;font-size:10px;color:var(--text-muted)">Overlay</span>
+        <span style="margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--lime)">@_lastPrice</span>
+    </div>
+    <div style="flex:1;min-height:0;position:relative">
+        <canvas @ref="_canvas" style="width:100%;height:100%;display:block"></canvas>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Symbol { get; set; } = "BTCUSDT";
+
+    ElementReference _canvas;
+    string _lastPrice = "—";
+    bool _ready;
+
+    class ExLine
+    {
+        public string Name = "";
+        public string Color = "#00f5d4";
+        public bool On = true;
+        public List<(long T, double P)> Points = new();
+    }
+
+    readonly List<ExLine> _exchanges = new()
+    {
+        new() { Name = "Binance", Color = "#f0b90b", On = true },
+        new() { Name = "Bybit", Color = "#f7a600", On = false },
+        new() { Name = "OKX", Color = "#a0a0bc", On = false },
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Market.OnTrade += OnTrade;
+        await Market.SubscribeAsync(Symbol, true);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _ready = true;
+            await DrawAsync();
+        }
+    }
+
+    void OnTrade(string symbol, TradeTick t)
+    {
+        if (!symbol.Equals(Symbol, StringComparison.OrdinalIgnoreCase)) return;
+        var binance = _exchanges[0];
+        if (!binance.On) return;
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        binance.Points.Add((ts, (double)t.Price));
+        if (binance.Points.Count > 200) binance.Points.RemoveAt(0);
+        // Synthetic slight offsets for other exchanges (until real multi-feed)
+        if (_exchanges[1].On)
+        {
+            _exchanges[1].Points.Add((ts, (double)t.Price * (1 + 0.00015 * Math.Sin(ts / 1000.0))));
+            if (_exchanges[1].Points.Count > 200) _exchanges[1].Points.RemoveAt(0);
+        }
+        if (_exchanges[2].On)
+        {
+            _exchanges[2].Points.Add((ts, (double)t.Price * (1 - 0.00012 * Math.Cos(ts / 800.0))));
+            if (_exchanges[2].Points.Count > 200) _exchanges[2].Points.RemoveAt(0);
+        }
+        _lastPrice = t.Price >= 1000 ? t.Price.ToString("N1") : t.Price.ToString("G6");
+        _ = InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            await DrawAsync();
+        });
+    }
+
+    void ToggleEx(ExLine ex, ChangeEventArgs e)
+    {
+        ex.On = e.Value is bool b && b;
+        _ = DrawAsync();
+    }
+
+    async Task DrawAsync()
+    {
+        if (!_ready) return;
+        var series = _exchanges.Where(x => x.On && x.Points.Count > 1)
+            .Select(x => new { x.Name, x.Color, points = x.Points.Select(p => new { t = p.T, p = p.P }).ToArray() })
+            .ToArray();
+        try
+        {
+            await JS.InvokeVoidAsync("hypeChart.drawOverlay", _canvas, series);
+        }
+        catch { /* js not ready */ }
+    }
+
+    public void Dispose() => Market.OnTrade -= OnTrade;
+}
