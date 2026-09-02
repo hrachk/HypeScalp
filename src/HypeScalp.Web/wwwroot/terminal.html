@@ -1529,15 +1529,17 @@ window.TradeAPI = {
 };
 
 // Poll orders + positions
-// Safe poll: 8s UI interval; server caches 5s → exchange hit ~1/5–8s max
+// MetaScalp model: prefer User Data Stream via SignalR; rare REST fallback
+window.__hsUserStream = false;
 setInterval(async () => {
+  if (window.__hsUserStream) return; // stream owns state
   try {
     const st = await TradeAPI.status();
     if (!st.ready) return;
     TradeAPI.refreshOrders();
     TradeAPI.refreshPositions();
   } catch {}
-}, 8000);
+}, 15000);
 
 
 // Poll trade readiness
@@ -1759,6 +1761,36 @@ const _oldConnect = window.__hsConnectPatched;
         .build();
       conn.on('orderBook', applyBook);
       conn.on('trade', applyTrade);
+      conn.on('accountStatus', function (msg) {
+        if (msg && msg.mode === 'user_stream') {
+          window.__hsUserStream = true;
+          const fs = document.getElementById('feedStatus');
+          if (fs) { fs.textContent = 'LIVE+UDS'; fs.style.color = 'var(--lime)'; }
+          showToast('User Data Stream ON (no REST poll)');
+        }
+      });
+      conn.on('ordersSnapshot', function (list) {
+        window.__hsUserStream = true;
+        TradeAPI.openOrders = list || [];
+        TradeAPI.paintOrderFlags();
+      });
+      conn.on('positionsSnapshot', function (list) {
+        window.__hsUserStream = true;
+        TradeAPI.positions = list || [];
+        TradeAPI.paintPositions();
+      });
+      conn.on('orderUpdate', function () {
+        // lightweight: refresh from memory API (no force = stream memory)
+        TradeAPI.refreshOrders(false);
+      });
+      conn.on('positionUpdate', function (msg) {
+        if (msg && msg.positions) {
+          TradeAPI.positions = msg.positions;
+          TradeAPI.paintPositions();
+        } else {
+          TradeAPI.refreshPositions(false);
+        }
+      });
       conn.on('funding', function (msg) {
         const mark = document.getElementById('fundMark');
         const idx = document.getElementById('fundIndex');

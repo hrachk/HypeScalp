@@ -25,6 +25,7 @@ builder.Services.AddSingleton<ConnectionManager>();
 builder.Services.AddSingleton<MarketDataHub>();
 builder.Services.AddSingleton<TradingService>();
 builder.Services.AddSingleton<AccountDataCache>();
+builder.Services.AddSingleton<UserDataStreamService>();
 builder.Services.AddHostedService<MarketBroadcastService>();
 builder.Services.AddHostedService<FundingFeedService>();
 
@@ -34,6 +35,14 @@ Directory.CreateDirectory(Path.Combine(app.Environment.ContentRootPath, "App_Dat
 
 var settings = app.Services.GetRequiredService<SettingsService>();
 await settings.LoadAsync();
+
+// Start user-data streams for already-connected sessions after warmup
+_ = Task.Run(async () =>
+{
+    await Task.Delay(1500);
+    try { await app.Services.GetRequiredService<UserDataStreamService>().SyncSessionsAsync(); }
+    catch { /* ignore */ }
+});
 
 if (!app.Environment.IsDevelopment())
 {

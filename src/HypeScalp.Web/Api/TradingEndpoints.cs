@@ -64,15 +64,29 @@ public static class TradingEndpoints
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
-        g.MapGet("/positions", async (string? exchange, bool? force, AccountDataCache cache) =>
+        g.MapGet("/positions", async (string? exchange, bool? force, AccountDataCache cache, UserDataStreamService uds) =>
         {
-            var list = await cache.GetPositionsAsync(force == true, ParseEx(exchange));
+            // MetaScalp model: memory from user stream first
+            if (force != true)
+                return Results.Ok(uds.SnapshotPositions());
+            var list = await cache.GetPositionsAsync(true, ParseEx(exchange));
             return Results.Ok(list);
         });
 
-        g.MapGet("/orders", async (string? symbol, string? exchange, bool? force, AccountDataCache cache) =>
+        g.MapGet("/orders", async (string? symbol, string? exchange, bool? force, AccountDataCache cache, UserDataStreamService uds) =>
         {
-            var list = await cache.GetOpenOrdersAsync(symbol, force == true, ParseEx(exchange));
+            if (force != true)
+            {
+                var live = uds.SnapshotOrders();
+                if (!string.IsNullOrWhiteSpace(symbol))
+                {
+                    var norm = symbol.Replace("-", "").Replace("_", "").ToUpperInvariant();
+                    live = live.Where(o => o.Symbol.Replace("-", "").Replace("_", "")
+                        .Equals(norm, StringComparison.OrdinalIgnoreCase)).ToList();
+                }
+                return Results.Ok(live);
+            }
+            var list = await cache.GetOpenOrdersAsync(symbol, true, ParseEx(exchange));
             return Results.Ok(list);
         });
     }
