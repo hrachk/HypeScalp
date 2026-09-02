@@ -68,7 +68,7 @@ public class TradingService
             var order = await client.PlaceOrderAsync(NormalizeSymbol(client.Exchange, symbol), side, OrderType.Market, quantity);
             _log.LogInformation("MARKET {Side} {Qty} {Symbol} via {Ex} -> {Id}", side, quantity, symbol, client.Exchange, order.OrderId);
             OnPositionsChanged?.Invoke();
-            return TradeResult.Ok($"MARKET {side} {quantity} {symbol}", order, client.Exchange);
+            return TradeResult.Success($"MARKET {side} {quantity} {symbol}", order, client.Exchange);
         }
         catch (Exception ex)
         {
@@ -91,7 +91,7 @@ public class TradingService
             CacheOrder(order);
             _log.LogInformation("LIMIT {Side} {Qty}@{Price} {Symbol} via {Ex} -> {Id}", side, quantity, price, symbol, client.Exchange, order.OrderId);
             OnOrdersChanged?.Invoke();
-            return TradeResult.Ok($"LIMIT {side} {quantity} @ {price}", order, client.Exchange);
+            return TradeResult.Success($"LIMIT {side} {quantity} @ {price}", order, client.Exchange);
         }
         catch (Exception ex)
         {
@@ -114,7 +114,7 @@ public class TradingService
                 _openOrders.TryRemove(key, out _);
             OnOrdersChanged?.Invoke();
             _log.LogInformation("CANCEL ALL {Symbol} via {Ex}", symbol, client.Exchange);
-            return TradeResult.Ok($"CANCEL ALL {symbol}", null, client.Exchange);
+            return TradeResult.Success($"CANCEL ALL {symbol}", null, client.Exchange);
         }
         catch (Exception ex)
         {
@@ -134,7 +134,7 @@ public class TradingService
             await client.CancelOrderAsync(sym, orderId);
             _openOrders.TryRemove(OrderKey(client.Exchange, sym, orderId), out _);
             OnOrdersChanged?.Invoke();
-            return TradeResult.Ok($"CANCEL {orderId}", null, client.Exchange);
+            return TradeResult.Success($"CANCEL {orderId}", null, client.Exchange);
         }
         catch (Exception ex)
         {
@@ -154,13 +154,13 @@ public class TradingService
             var sym = NormalizeSymbol(client.Exchange, symbol);
             var pos = positions.FirstOrDefault(p => NormSym(p.Symbol) == NormSym(sym));
             if (pos == null || pos.Size == 0)
-                return TradeResult.Ok($"No open position on {symbol}", null, client.Exchange);
+                return TradeResult.Success($"No open position on {symbol}", null, client.Exchange);
 
             var side = pos.Size > 0 ? OrderSide.Sell : OrderSide.Buy;
             var qty = Math.Abs(pos.Size);
             var order = await client.PlaceOrderAsync(pos.Symbol, side, OrderType.Market, qty);
             OnPositionsChanged?.Invoke();
-            return TradeResult.Ok($"FLATTEN {side} {qty} {symbol}", order, client.Exchange);
+            return TradeResult.Success($"FLATTEN {side} {qty} {symbol}", order, client.Exchange);
         }
         catch (Exception ex)
         {
@@ -221,19 +221,28 @@ public class TradingService
 
 public sealed class TradeResult
 {
-    public bool Ok { get; init; }
+    public bool IsOk { get; init; }
     public string Code { get; init; } = "";
     public string Message { get; init; } = "";
     public string? OrderId { get; init; }
     public string? Exchange { get; init; }
 
-    public static TradeResult Ok(string message, Order? order, ExchangeType? ex = null) => new()
+    /// <summary>JSON-friendly alias used by terminal UI (data.ok).</summary>
+    public bool Ok => IsOk;
+
+    public static TradeResult Success(string message, Order? order, ExchangeType? ex = null) => new()
     {
-        Ok = true, Code = "OK", Message = message, OrderId = order?.OrderId, Exchange = ex?.ToString()
+        IsOk = true,
+        Code = "OK",
+        Message = message,
+        OrderId = order?.OrderId,
+        Exchange = ex?.ToString()
     };
 
     public static TradeResult Fail(string code, string message) => new()
     {
-        Ok = false, Code = code, Message = message
+        IsOk = false,
+        Code = code,
+        Message = message
     };
 }

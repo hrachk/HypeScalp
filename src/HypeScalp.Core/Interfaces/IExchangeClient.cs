@@ -22,3 +22,4 @@ public interface IExchangeClient : IAsyncDisposable
     Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string? symbol = null);
     Task<IReadOnlyList<Position>> GetPositionsAsync();
 }
+
