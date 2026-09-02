@@ -1,6 +1,7 @@
 using HypeScalp.Core.Interfaces;
 using HypeScalp.Exchange;
 using HypeScalp.Web.Components;
+using HypeScalp.Web.Hubs;
 using HypeScalp.Web.Services;
 using Microsoft.AspNetCore.DataProtection;
 
@@ -8,6 +9,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+builder.Services.AddSignalR();
 
 var keysPath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "keys");
 Directory.CreateDirectory(keysPath);
@@ -20,6 +23,7 @@ builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<ConnectionManager>();
 builder.Services.AddSingleton<MarketDataHub>();
 builder.Services.AddSingleton<TradingService>();
+builder.Services.AddHostedService<MarketBroadcastService>();
 
 var app = builder.Build();
 
@@ -37,6 +41,10 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
+
+app.MapGet("/", () => Results.Redirect("/terminal.html"));
+
+app.MapHub<MarketStreamHub>("/hubs/market");
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

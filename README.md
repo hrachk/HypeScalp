@@ -1,4 +1,6 @@
-# HypeScalp Web — .NET 8 Blazor Scalping Terminal
+# HypeScalp PRO — Full Terminal (.NET 8)
+
+Полноценный UI как в **HypeScalp_Prototype.html** + backend на ASP.NET Core.
 
 ## Run
 
@@ -7,25 +9,33 @@ dotnet restore
 dotnet run --project src/HypeScalp.Web
 ```
 
-## Features (HS-1)
+Откроется `https://localhost:7150/` → **`/terminal.html`** (полный терминал).
 
-| Feature | Details |
-|---------|---------|
-| **Live DOM** | Binance / Bybit / OKX public WebSocket depth + trades |
-| **Chart overlay** | Real multi-exchange lines (Binance + Bybit + OKX) |
-| **Trading from DOM** | Market / Limit via connected API client (`TradingService`) |
-| **Data Protection** | API secrets encrypted at rest |
-| **Layout** | Drag windows → 💾 saves to `localStorage` |
+## UI (prototype)
 
-## Connections
+- Floating / drag / resize окна
+- **+ Window**: Chart, DOM, Multi-monitor, Screener, Positions, Tape, Hotkeys
+- Workspace tabs, Themes, Flatten
+- Hotkeys: Space buy, X flatten, N chart, D DOM
+- Layout стартовый: watchlist + multi chart + Binance/Bybit/Gate DOM + positions + tape
 
-1. Open **Connections**
-2. API Key + Secret (+ Passphrase for OKX)
-3. **Connect**
-4. BUY/SELL / click ladder level → order through that client
+## Live data
 
-Public market data works **without** keys. Orders need a connected exchange.
+- SignalR hub: `/hubs/market`
+- `MarketDataHub` → Binance / Bybit / Gate / OKX public WS
+- DOM обновляется по `orderBook` / `trade` (после connect toast «Live feed connected»)
 
-## Layout
+## Connections (API keys)
 
-Drag panels by header. Click **💾** on chart window to save positions.
+- Blazor page: **`/settings`**
+- Data Protection для секретов
+- TradingService для ордеров (при подключённом клиенте)
+
+## Structure
+
+```
+wwwroot/terminal.html   ← full prototype terminal
+Hubs/MarketStreamHub    ← SignalR
+Services/MarketDataHub  ← exchange WebSockets
+Components/…            ← Blazor settings + legacy panels
+```
