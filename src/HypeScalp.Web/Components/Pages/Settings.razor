@@ -1,0 +1,159 @@
+@page "/settings"
+@rendermode InteractiveServer
+@inject SettingsService Settings
+@inject ConnectionManager ConnMgr
+@inject IJSRuntime JS
+
+<div class="page">
+    <h2 style="font-size:18px;margin-bottom:16px">Exchange Connections</h2>
+    <p style="color:var(--text-dim);margin-bottom:20px;font-size:12px">
+        Добавь API Key и Secret — как в MetaScalp. Секреты сохраняются на сервере (App_Data).
+    </p>
+
+    <div style="display:grid;grid-template-columns:300px 1fr;gap:16px">
+        <!-- List -->
+        <div class="card" style="padding:0">
+            <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:11px;color:var(--text-dim)">
+                SAVED CONNECTIONS
+            </div>
+            <ul class="conn-list">
+                @foreach (var c in Settings.Settings.Connections)
+                {
+                    <li class="conn-item" @onclick="() => _selected = c" style="@(_selected?.Id==c.Id?"background:rgba(0,245,212,0.08)":"")">
+                        <div class="status @(c.Status==ConnectionStatus.Connected?"connected":c.Status==ConnectionStatus.Error?"error":"")"></div>
+                        <div style="flex:1">
+                            <div style="font-weight:600">@c.Name</div>
+                            <div style="font-size:10px;color:var(--text-muted)">@c.Exchange · @c.Market</div>
+                        </div>
+                    </li>
+                }
+                @if (!Settings.Settings.Connections.Any())
+                {
+                    <li style="padding:16px;color:var(--text-muted)">Пока нет подключений</li>
+                }
+            </ul>
+        </div>
+
+        <!-- Form -->
+        <div class="card">
+            <h3>Add Connection</h3>
+            <div class="form-row">
+                <label>Display Name</label>
+                <input @bind="_name" placeholder="My Binance Futures"/>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label>Exchange</label>
+                    <select @bind="_exchange">
+                        @foreach (ExchangeType e in Enum.GetValues<ExchangeType>())
+                        {
+                            <option value="@e">@e</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>Market</label>
+                    <select @bind="_market">
+                        @foreach (MarketType m in Enum.GetValues<MarketType>())
+                        {
+                            <option value="@m">@m</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <label>API Key</label>
+                <input @bind="_apiKey" autocomplete="off"/>
+            </div>
+            <div class="form-row">
+                <label>API Secret</label>
+                <input @bind="_apiSecret" type="password" autocomplete="new-password"/>
+            </div>
+            @if (_exchange is ExchangeType.Okx or ExchangeType.KuCoin)
+            {
+                <div class="form-row">
+                    <label>Passphrase</label>
+                    <input @bind="_passphrase"/>
+                </div>
+            }
+            <div class="form-row">
+                <label>Proxy (optional)</label>
+                <input @bind="_proxy" placeholder="http://127.0.0.1:7890"/>
+            </div>
+            <div class="form-row">
+                <label><input type="checkbox" @bind="_testnet"/> Testnet / Demo</label>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                <button class="btn primary" @onclick="AddAsync">Add Connection</button>
+                <button class="btn" @onclick="ConnectSelectedAsync" disabled="@(_selected==null)">Connect</button>
+                <button class="btn" @onclick="DisconnectSelectedAsync" disabled="@(_selected==null)">Disconnect</button>
+                <button class="btn danger" @onclick="RemoveSelectedAsync" disabled="@(_selected==null)">Remove</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_msg))
+            {
+                <div style="margin-top:12px;color:var(--cyan);font-size:12px">@_msg</div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    string _name = "", _apiKey = "", _apiSecret = "", _passphrase = "", _proxy = "", _msg = "";
+    ExchangeType _exchange = ExchangeType.Binance;
+    MarketType _market = MarketType.UsdtFutures;
+    bool _testnet;
+    ExchangeConnection? _selected;
+
+    async Task AddAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(_apiSecret))
+        {
+            _msg = "API Key and Secret required";
+            return;
+        }
+        var conn = new ExchangeConnection
+        {
+            Name = string.IsNullOrWhiteSpace(_name) ? $"{_exchange} {_market}" : _name,
+            Exchange = _exchange,
+            Market = _market,
+            ApiKey = _apiKey.Trim(),
+            ApiSecret = _apiSecret.Trim(),
+            Passphrase = string.IsNullOrWhiteSpace(_passphrase) ? null : _passphrase.Trim(),
+            Proxy = string.IsNullOrWhiteSpace(_proxy) ? null : _proxy.Trim(),
+            IsTestnet = _testnet
+        };
+        Settings.Settings.Connections.Add(conn);
+        await Settings.SaveAsync();
+        _selected = conn;
+        _name = _apiKey = _apiSecret = _passphrase = _proxy = "";
+        _msg = $"Added: {conn.Name}";
+        await JS.InvokeVoidAsync("showToast", _msg);
+    }
+
+    async Task ConnectSelectedAsync()
+    {
+        if (_selected == null) return;
+        _msg = $"Connecting {_selected.Name}...";
+        var ok = await ConnMgr.ConnectAsync(_selected.Id);
+        _msg = ok ? $"Connected: {_selected.Name}" : $"Failed: {_selected.Name}";
+        await JS.InvokeVoidAsync("showToast", _msg);
+    }
+
+    async Task DisconnectSelectedAsync()
+    {
+        if (_selected == null) return;
+        await ConnMgr.DisconnectAsync(_selected.Id);
+        _msg = $"Disconnected: {_selected.Name}";
+    }
+
+    async Task RemoveSelectedAsync()
+    {
+        if (_selected == null) return;
+        await ConnMgr.DisconnectAsync(_selected.Id);
+        Settings.Settings.Connections.RemoveAll(c => c.Id == _selected.Id);
+        await Settings.SaveAsync();
+        _msg = "Removed";
+        _selected = null;
+    }
+}

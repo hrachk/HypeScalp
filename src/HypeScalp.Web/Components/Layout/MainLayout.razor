@@ -1,0 +1,51 @@
+@inherits LayoutComponentBase
+@inject ConnectionManager ConnMgr
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="topbar">
+    <div class="logo">HYPE<span>SCALP</span><span class="badge">WEB</span></div>
+    <nav style="display:flex;gap:4px;margin-left:12px">
+        <a href="/" class="btn" style="@(IsActive("/") ? "border-color:var(--cyan);color:var(--cyan)" : "")">Terminal</a>
+        <a href="/settings" class="btn" style="@(IsActive("/settings") ? "border-color:var(--cyan);color:var(--cyan)" : "")">Connections</a>
+    </nav>
+    <div class="top-actions">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim)">
+            <div class="conn-dot"></div>
+            <span>@_connected connected</span>
+        </div>
+        <div class="pnl-box">
+            <div><div class="label">Session</div><div class="pos">+$0.00</div></div>
+            <div><div class="label">Risk</div><div style="color:var(--orange)">$0</div></div>
+        </div>
+        <a href="/settings" class="btn primary">+ Connection</a>
+    </div>
+</div>
+
+@Body
+
+<div class="statusbar">
+    <div>HypeScalp Web · .NET 8 Blazor</div>
+    <div style="margin-left:auto">API Key connections · Drag windows · Hype design</div>
+</div>
+
+@code {
+    int _connected;
+
+    protected override void OnInitialized()
+    {
+        _connected = ConnMgr.ConnectedCount;
+        ConnMgr.OnChanged += OnConnChanged;
+    }
+
+    void OnConnChanged()
+    {
+        _connected = ConnMgr.ConnectedCount;
+        InvokeAsync(StateHasChanged);
+    }
+
+    bool IsActive(string path) => Nav.Uri.TrimEnd('/').EndsWith(path == "/" ? "" : path) ||
+                                  (path == "/" && !Nav.Uri.Contains("/settings"));
+
+    public void Dispose() => ConnMgr.OnChanged -= OnConnChanged;
+}

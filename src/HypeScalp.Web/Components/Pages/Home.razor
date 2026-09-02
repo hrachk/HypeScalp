@@ -1,0 +1,93 @@
+@page "/"
+@rendermode InteractiveServer
+@inject IJSRuntime JS
+
+<div class="workspace" id="workspace">
+    <!-- Watchlist -->
+    <div class="win active" style="left:8px;top:8px;width:240px;height:420px">
+        <div class="win-header">
+            <div class="win-title">SCREENER</div>
+            <button class="win-btn close" @onclick="() => { }">✕</button>
+        </div>
+        <div class="win-body" style="overflow:auto">
+            @foreach (var p in _pairs)
+            {
+                <div style="display:grid;grid-template-columns:1fr 60px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer"
+                     @onclick="() => OpenDom(p.Sym)">
+                    <div>
+                        <div style="font-weight:600">@p.Sym</div>
+                        <div style="font-size:9px;color:var(--text-muted)">@p.Ex</div>
+                    </div>
+                    <div style="text-align:right;font-family:var(--mono);color:@(p.Chg.StartsWith("+")?"var(--lime)":"var(--magenta)")">@p.Chg</div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Multi chart placeholder -->
+    <div class="win" style="left:260px;top:8px;width:640px;height:280px">
+        <div class="win-header">
+            <div class="win-title">BTCUSDT <span class="badge">MULTI OVERLAY</span></div>
+            <button class="win-btn">□</button>
+            <button class="win-btn close">✕</button>
+        </div>
+        <div class="win-body" style="align-items:center;justify-content:center;display:flex;color:var(--text-muted)">
+            Chart · 1s / 5s / Overlay (Binance + Bybit + OKX) — connect WebSocket feeds
+        </div>
+    </div>
+
+    <!-- DOM 1 -->
+    <div class="win" style="left:260px;top:300px;width:340px;height:380px">
+        <div class="win-header">
+            <div class="win-title">BTCUSDT <span class="badge">BINANCE</span></div>
+            <button class="win-btn close">✕</button>
+        </div>
+        <div class="win-body">
+            <DomPanel Symbol="BTCUSDT" Mid="67840"/>
+        </div>
+    </div>
+
+    <!-- DOM 2 -->
+    <div class="win" style="left:610px;top:300px;width:340px;height:380px">
+        <div class="win-header">
+            <div class="win-title">ETHUSDT <span class="badge">BYBIT</span></div>
+            <button class="win-btn close">✕</button>
+        </div>
+        <div class="win-body">
+            <DomPanel Symbol="ETHUSDT" Mid="3420"/>
+        </div>
+    </div>
+
+    <!-- Positions -->
+    <div class="win" style="left:960px;top:8px;width:280px;height:280px">
+        <div class="win-header">
+            <div class="win-title">POSITIONS</div>
+        </div>
+        <div class="win-body" style="overflow:auto;padding:8px">
+            <div style="padding:8px;border-bottom:1px solid var(--border)">
+                <div style="font-weight:600">BTCUSDT</div>
+                <div style="font-size:10px;color:var(--lime)">LONG · —</div>
+            </div>
+            <div style="padding:8px;color:var(--text-muted);font-size:11px">Connect exchange to load positions</div>
+        </div>
+    </div>
+</div>
+
+@code {
+    record Pair(string Sym, string Ex, string Chg);
+    List<Pair> _pairs = new()
+    {
+        new("BTCUSDT","Binance","+1.24%"),
+        new("ETHUSDT","Bybit","+0.87%"),
+        new("SOLUSDT","OKX","-0.42%"),
+        new("BNBUSDT","Binance","+0.31%"),
+        new("XRPUSDT","Bybit","+2.15%"),
+        new("AVAXUSDT","Bitget","+1.92%"),
+        new("NEARUSDT","MEXC","+3.41%"),
+    };
+
+    async Task OpenDom(string sym)
+    {
+        await JS.InvokeVoidAsync("showToast", $"Open DOM · {sym}");
+    }
+}

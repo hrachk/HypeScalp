@@ -1,0 +1,70 @@
+@rendermode InteractiveServer
+
+<div class="dom-body">
+    <div class="clusters-col">
+        @foreach (var c in _clusters)
+        {
+            <div style="height:17px;display:flex;align-items:center;justify-content:center;color:@(c.StartsWith("+")?"var(--lime)":"var(--magenta)")">@c</div>
+        }
+    </div>
+    <div class="ladder-col">
+        @foreach (var l in _levels)
+        {
+            <div class="level @l.Side">
+                <span class="price">@l.Price</span>
+                <span style="text-align:right;color:var(--text-dim)">@l.Qty</span>
+            </div>
+        }
+    </div>
+    <div class="tape-col">
+        @foreach (var t in _tape)
+        {
+            <div style="height:17px;padding:0 4px;display:flex;align-items:center;color:@(t.Buy?"var(--bid)":"var(--ask)")">
+                @(t.Buy?"▲":"▼") @t.Sz
+            </div>
+        }
+    </div>
+</div>
+<div class="dom-footer">
+    <button class="vol-btn active">0.01</button>
+    <button class="vol-btn">0.05</button>
+    <button class="vol-btn">0.1</button>
+    <button class="vol-btn">0.5</button>
+    <button class="trade-btn buy" @onclick="OnBuy">BUY</button>
+    <button class="trade-btn sell" @onclick="OnSell">SELL</button>
+</div>
+
+@code {
+    [Parameter] public string Symbol { get; set; } = "BTCUSDT";
+    [Parameter] public double Mid { get; set; } = 100;
+
+    [Inject] IJSRuntime JS { get; set; } = default!;
+
+    record Level(string Price, string Qty, string Side);
+    record TapeItem(bool Buy, string Sz);
+
+    List<string> _clusters = new();
+    List<Level> _levels = new();
+    List<TapeItem> _tape = new();
+
+    protected override void OnParametersSet()
+    {
+        var rnd = new Random(Symbol.GetHashCode());
+        _levels.Clear();
+        for (int i = 10; i >= 1; i--)
+            _levels.Add(new((Mid + i * 0.5).ToString("F1"), (rnd.NextDouble() * 4).ToString("F2"), "ask"));
+        _levels.Add(new(Mid.ToString("F1"), "SPR", "mid"));
+        for (int i = 1; i <= 10; i++)
+            _levels.Add(new((Mid - i * 0.5).ToString("F1"), (rnd.NextDouble() * 4).ToString("F2"), "bid"));
+
+        _clusters = Enumerable.Range(0, 22).Select(_ =>
+            (rnd.NextDouble() > 0.5 ? "+" : "-") + (rnd.NextDouble() * 18).ToString("F1")).ToList();
+        _tape = Enumerable.Range(0, 18).Select(_ =>
+            new TapeItem(rnd.NextDouble() > 0.5, (rnd.NextDouble() * 1.2).ToString("F3"))).ToList();
+    }
+
+    async Task OnBuy() => await Toast("BUY market");
+    async Task OnSell() => await Toast("SELL market");
+
+    async Task Toast(string msg) => await JS.InvokeVoidAsync("showToast", $"{msg} · {Symbol}");
+}
