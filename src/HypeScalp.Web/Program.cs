@@ -3,6 +3,7 @@ using HypeScalp.Exchange;
 using HypeScalp.Web.Components;
 using HypeScalp.Web.Hubs;
 using HypeScalp.Web.Services;
+using HypeScalp.Web.Api;
 using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -45,6 +46,8 @@ app.UseAntiforgery();
 app.MapGet("/", () => Results.Redirect("/terminal.html"));
 
 app.MapHub<MarketStreamHub>("/hubs/market");
+
+app.MapTradingApi();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

@@ -1097,16 +1097,24 @@ function createDOMWindow(pair = 'BTCUSDT', exchange = 'BINANCE', linkId = 1) {
       });
       el.querySelectorAll('.trade-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-          const side = btn.classList.contains('buy') ? 'BUY' : 'SELL';
-          showToast(`${side} market · ${pair}`);
+          TradeAPI.setFromDom(el);
+          const side = btn.classList.contains('buy') ? 'buy' : 'sell';
+          TradeAPI.market(side);
         });
       });
       el.querySelector('.ladder-col').addEventListener('click', e => {
         const lvl = e.target.closest('.level');
         if (!lvl || lvl.classList.contains('mid')) return;
         const price = lvl.querySelector('.price')?.textContent;
-        const side = lvl.classList.contains('ask') ? 'SELL limit' : 'BUY limit';
-        showToast(`${side} @ ${price}`);
+        if (!price) return;
+        TradeAPI.setFromDom(el);
+        const side = lvl.classList.contains('ask') ? 'sell' : 'buy';
+        TradeAPI.limit(side, price);
+      });
+      el.addEventListener('mousedown', () => {
+        document.querySelectorAll('.win').forEach(w => w.classList.remove('active'));
+        el.classList.add('active');
+        TradeAPI.setFromDom(el);
       });
 
       // Mock refresh until SignalR sets data-live
@@ -1324,6 +1332,113 @@ setInterval(() => {
   }
 }, 400);
 
+
+// ===== Fast trade API (instant place / cancel / flatten) =====
+window.TradeAPI = {
+  activeSymbol: 'BTCUSDT',
+  activeExchange: 'Binance',
+  qty: 0.01,
+  busy: false,
+
+  async post(path, body) {
+    const res = await fetch('/api/trade/' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    let data = null;
+    try { data = await res.json(); } catch { data = { message: res.statusText }; }
+    return { ok: res.ok && (data.ok !== false), status: res.status, data };
+  },
+
+  async status() {
+    const res = await fetch('/api/trade/status');
+    return res.json();
+  },
+
+  payload(extra) {
+    return Object.assign({
+      symbol: this.activeSymbol,
+      exchange: this.activeExchange,
+      quantity: this.qty
+    }, extra || {});
+  },
+
+  async market(side) {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const r = await this.post('market', this.payload({ side }));
+      showToast(r.ok ? ('OK ' + (r.data.message || side)) : ('ERR ' + (r.data.message || r.data.Message || 'failed')));
+      if (r.ok && typeof beep === 'function') beep();
+      return r;
+    } catch (e) {
+      showToast('ERR network: ' + e.message);
+    } finally { this.busy = false; }
+  },
+
+  async limit(side, price) {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const r = await this.post('limit', this.payload({ side, price: Number(price) }));
+      showToast(r.ok ? ('OK ' + (r.data.message || r.data.Message)) : ('ERR ' + (r.data.message || r.data.Message || 'failed')));
+      if (r.ok && typeof beep === 'function') beep();
+      return r;
+    } catch (e) {
+      showToast('ERR network: ' + e.message);
+    } finally { this.busy = false; }
+  },
+
+  async cancelAll() {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const r = await this.post('cancel-all', this.payload());
+      showToast(r.ok ? ('OK ' + (r.data.message || 'cancel all')) : ('ERR ' + (r.data.message || r.data.Message)));
+      return r;
+    } catch (e) {
+      showToast('ERR ' + e.message);
+    } finally { this.busy = false; }
+  },
+
+  async flatten() {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const r = await this.post('flatten', this.payload());
+      showToast(r.ok ? ('OK ' + (r.data.message || 'flatten')) : ('ERR ' + (r.data.message || r.data.Message)));
+      if (r.ok && typeof beep === 'function') beep();
+      return r;
+    } catch (e) {
+      showToast('ERR ' + e.message);
+    } finally { this.busy = false; }
+  },
+
+  setFromDom(el) {
+    if (!el) return;
+    if (el.dataset.pair) this.activeSymbol = el.dataset.pair;
+    if (el.dataset.exchange) this.activeExchange = el.dataset.exchange;
+    const activeVol = el.querySelector('.vol-btn.active');
+    if (activeVol) {
+      const q = parseFloat(activeVol.textContent);
+      if (!isNaN(q)) this.qty = q;
+    }
+  }
+};
+
+// Poll trade readiness
+setTimeout(async () => {
+  try {
+    const st = await TradeAPI.status();
+    const fs = document.getElementById('feedStatus');
+    if (st.ready) {
+      showToast('Trading READY · ' + (st.exchange || ''));
+      if (fs) { fs.textContent = (fs.textContent || '') + '+TRD'; }
+    }
+  } catch {}
+}, 1200);
+
 // ===== HypeScalp ≥ MetaScalp control layer =====
 window.HS = {
   linkGroup: 1,
@@ -1422,10 +1537,15 @@ document.getElementById('newMenu')?.addEventListener('click', e => {
 // Hotkeys — MetaScalp-like
 document.addEventListener('keydown', e => {
   if (e.target.matches('input, textarea, select')) return;
-  if (e.code === 'Space') { e.preventDefault(); showToast('MARKET BUY · active DOM'); beep(); }
-  if (e.code === 'KeyX') { showToast('FLATTEN ALL (close positions market)'); beep(); }
+  // Focus last active DOM for symbol/exchange
+  const active = document.querySelector('.win.active');
+  if (active) TradeAPI.setFromDom(active);
+
+  if (e.code === 'Space') { e.preventDefault(); TradeAPI.market('buy'); }
+  if (e.code === 'KeyV') { e.preventDefault(); TradeAPI.market('sell'); }
+  if (e.code === 'KeyX') { e.preventDefault(); TradeAPI.flatten(); }
   if (e.code === 'KeyC') { e.preventDefault(); centerAllDoms(); }
-  if (e.code === 'Escape') showToast('Cancel all limit orders (active)');
+  if (e.code === 'Escape') { e.preventDefault(); TradeAPI.cancelAll(); }
   if (e.code === 'KeyN') createChartWindow('BTCUSDT', 'BINANCE');
   if (e.code === 'KeyD') createDOMWindow('BTCUSDT', 'BINANCE', HS.linkGroup);
   if (e.code === 'KeyO') createComboWindow('BTCUSDT', 'BINANCE');
@@ -1433,10 +1553,7 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Digit2') { HS.linkGroup = 2; document.getElementById('linkGroup').textContent = '2'; showToast('Link group 2'); }
   if (e.code === 'Digit3') { HS.linkGroup = 3; document.getElementById('linkGroup').textContent = '3'; showToast('Link group 3'); }
   if (e.code === 'F1') centerAllDoms();
-  if (e.code === 'F2') showToast('Cancel ALL limits (global)');
-  if (e.code === 'F3') showToast('Cancel ALL stops (global)');
-  if (e.code === 'KeyB') showToast('Limit BUY @ best bid');
-  if (e.code === 'KeyS') showToast('Limit SELL @ best ask');
+  if (e.code === 'F2') TradeAPI.cancelAll();
   if (e.code === 'KeyH') openDomSettings();
 });
 
@@ -1522,7 +1639,7 @@ const _oldConnect = window.__hsConnectPatched;
     }
   }
 
-  document.getElementById('btnFlatten')?.addEventListener('click', () => showToast('FLATTEN ALL (demo)'));
+  document.getElementById('btnFlatten')?.addEventListener('click', () => { const a=document.querySelector('.win.active'); if(a) TradeAPI.setFromDom(a); TradeAPI.flatten(); });
   document.getElementById('btnTheme')?.addEventListener('click', () => {
     document.body.classList.toggle('theme-alt');
     showToast('Theme toggled');
