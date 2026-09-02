@@ -3,8 +3,7 @@
 @inject IJSRuntime JS
 
 <div class="workspace" id="workspace">
-    <!-- Watchlist -->
-    <div class="win active" style="left:8px;top:8px;width:240px;height:420px">
+    <div class="win active" data-win="screener" style="left:8px;top:8px;width:240px;height:420px">
         <div class="win-header">
             <div class="win-title">SCREENER</div>
         </div>
@@ -23,43 +22,40 @@
         </div>
     </div>
 
-    <!-- Multi overlay chart -->
-    <div class="win" style="left:260px;top:8px;width:640px;height:280px">
+    <div class="win" data-win="chart" style="left:260px;top:8px;width:640px;height:280px">
         <div class="win-header">
-            <div class="win-title">@_symbol <span class="badge">MULTI OVERLAY · LIVE</span></div>
+            <div class="win-title">@_symbol <span class="badge">MULTI OVERLAY</span></div>
+            <button class="win-btn" title="Save layout" @onclick="SaveLayout">💾</button>
         </div>
         <div class="win-body">
-            <ChartOverlay Symbol="@_symbol" />
+            <ChartOverlay Symbol="@_symbol" @key="_symbol" />
         </div>
     </div>
 
-    <!-- Live DOM BTC -->
-    <div class="win" style="left:260px;top:300px;width:360px;height:400px">
+    <div class="win" data-win="dom-binance" style="left:260px;top:300px;width:340px;height:400px">
         <div class="win-header">
-            <div class="win-title">BTCUSDT <span class="badge">BINANCE WS</span></div>
+            <div class="win-title">BTCUSDT <span class="badge">BINANCE</span></div>
         </div>
         <div class="win-body">
-            <DomPanel Symbol="BTCUSDT" Futures="true" />
+            <DomPanel Symbol="BTCUSDT" Exchange="ExchangeType.Binance" Futures="true" />
         </div>
     </div>
 
-    <!-- Live DOM ETH -->
-    <div class="win" style="left:630px;top:300px;width:360px;height:400px">
+    <div class="win" data-win="dom-bybit" style="left:610px;top:300px;width:340px;height:400px">
         <div class="win-header">
-            <div class="win-title">ETHUSDT <span class="badge">BINANCE WS</span></div>
+            <div class="win-title">ETHUSDT <span class="badge">BYBIT</span></div>
         </div>
         <div class="win-body">
-            <DomPanel Symbol="ETHUSDT" Futures="true" />
+            <DomPanel Symbol="ETHUSDT" Exchange="ExchangeType.Bybit" Futures="true" />
         </div>
     </div>
 
-    <!-- Positions -->
-    <div class="win" style="left:1000px;top:8px;width:280px;height:280px">
+    <div class="win" data-win="dom-okx" style="left:960px;top:300px;width:320px;height:400px">
         <div class="win-header">
-            <div class="win-title">POSITIONS</div>
+            <div class="win-title">BTC-USDT <span class="badge">OKX</span></div>
         </div>
-        <div class="win-body" style="overflow:auto;padding:8px;color:var(--text-muted);font-size:11px">
-            Connect API key in Connections to load account positions.
+        <div class="win-body">
+            <DomPanel Symbol="BTC-USDT" Exchange="ExchangeType.Okx" Futures="true" />
         </div>
     </div>
 </div>
@@ -69,18 +65,28 @@
     record Pair(string Sym, string Ex, string Chg);
     List<Pair> _pairs = new()
     {
-        new("BTCUSDT","Binance","+1.24%"),
-        new("ETHUSDT","Bybit","+0.87%"),
-        new("SOLUSDT","OKX","-0.42%"),
-        new("BNBUSDT","Binance","+0.31%"),
-        new("XRPUSDT","Bybit","+2.15%"),
-        new("AVAXUSDT","Bitget","+1.92%"),
-        new("NEARUSDT","MEXC","+3.41%"),
+        new("BTCUSDT","Binance","live"),
+        new("ETHUSDT","Bybit","live"),
+        new("SOLUSDT","OKX","—"),
+        new("BNBUSDT","Binance","—"),
+        new("XRPUSDT","Bybit","—"),
     };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await JS.InvokeVoidAsync("hypeLayout.restore");
+    }
 
     async Task Select(string sym)
     {
-        _symbol = sym;
-        await JS.InvokeVoidAsync("showToast", $"Focus · {sym}");
+        _symbol = sym.Replace("-", "");
+        await JS.InvokeVoidAsync("showToast", $"Chart · {_symbol}");
+    }
+
+    async Task SaveLayout()
+    {
+        await JS.InvokeVoidAsync("hypeLayout.save");
+        await JS.InvokeVoidAsync("showToast", "Layout saved");
     }
 }

@@ -1,5 +1,6 @@
 @rendermode InteractiveServer
 @inject MarketDataHub Market
+@inject TradingService Trading
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -50,18 +51,19 @@
     {
         <button class="vol-btn @(_activeVol == v ? "active" : "")" @onclick="() => SetVol(v)">@v</button>
     }
-    <button class="trade-btn buy" @onclick="OnBuy">BUY</button>
-    <button class="trade-btn sell" @onclick="OnSell">SELL</button>
+    <button class="trade-btn buy" @onclick="OnBuy" disabled="@_busy">BUY</button>
+    <button class="trade-btn sell" @onclick="OnSell" disabled="@_busy">SELL</button>
     <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-dim)">
-        @(_live ? "LIVE" : "…") @Symbol
+        @(_live ? "LIVE" : "…") @Exchange · @Symbol
     </span>
 </div>
 
 @code {
     [Parameter] public string Symbol { get; set; } = "BTCUSDT";
     [Parameter] public bool Futures { get; set; } = true;
+    [Parameter] public ExchangeType Exchange { get; set; } = ExchangeType.Binance;
 
-    bool _live;
+    bool _live, _busy;
     decimal _mid, _spread, _maxAsk = 1, _maxBid = 1;
     List<OrderBookLevel> _asks = new();
     List<OrderBookLevel> _bids = new();
@@ -77,27 +79,26 @@
     {
         Market.OnOrderBook += HandleBook;
         Market.OnTrade += HandleTrade;
-        await Market.SubscribeAsync(Symbol, Futures);
+        await Market.SubscribeAsync(Exchange, Symbol, Futures);
         SeedMock();
     }
 
     void SeedMock()
     {
-        var rnd = new Random(Symbol.GetHashCode());
-        var mid = Symbol.StartsWith("BTC") ? 95000m : Symbol.StartsWith("ETH") ? 3400m : 150m;
+        var rnd = new Random(Symbol.GetHashCode() ^ (int)Exchange);
+        var mid = Symbol.Contains("BTC") ? 95000m : Symbol.Contains("ETH") ? 3400m : 150m;
         _mid = mid;
         for (int i = 10; i >= 1; i--)
             _asks.Add(new OrderBookLevel { Price = mid + i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
         for (int i = 1; i <= 10; i++)
             _bids.Add(new OrderBookLevel { Price = mid - i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
-        _clusters = Enumerable.Range(0, 20)
-            .Select(_ => (decimal)((rnd.NextDouble() - 0.5) * 20))
-            .ToList();
+        _clusters = Enumerable.Range(0, 20).Select(_ => (decimal)((rnd.NextDouble() - 0.5) * 20)).ToList();
     }
 
-    void HandleBook(string symbol, OrderBookSnapshot snap)
+    void HandleBook(string key, OrderBookSnapshot snap)
     {
-        if (!symbol.Equals(Symbol, StringComparison.OrdinalIgnoreCase)) return;
+        if (snap.Exchange != Exchange) return;
+        if (!SymbolMatch(snap.Symbol)) return;
         lock (_lock)
         {
             _asks = snap.Asks.Take(12).ToList();
@@ -111,20 +112,19 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
-    void HandleTrade(string symbol, TradeTick t)
+    void HandleTrade(string key, TradeTick t)
     {
-        if (!symbol.Equals(Symbol, StringComparison.OrdinalIgnoreCase)) return;
+        if (t.Exchange != Exchange) return;
+        if (!SymbolMatch(t.Symbol)) return;
         lock (_lock)
         {
             _tape.Insert(0, t);
             if (_tape.Count > 40) _tape.RemoveAt(_tape.Count - 1);
-
             if (t.IsBuy) _clusterBuy += t.Quantity;
             else _clusterSell += t.Quantity;
             if ((DateTime.UtcNow - _lastClusterBucket).TotalSeconds >= 1)
             {
-                var delta = _clusterBuy - _clusterSell;
-                _clusters.Insert(0, delta);
+                _clusters.Insert(0, _clusterBuy - _clusterSell);
                 if (_clusters.Count > 24) _clusters.RemoveAt(_clusters.Count - 1);
                 _clusterBuy = _clusterSell = 0;
                 _lastClusterBucket = DateTime.UtcNow;
@@ -133,20 +133,46 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
+    bool SymbolMatch(string s)
+    {
+        var a = Symbol.Replace("-", "").ToUpperInvariant();
+        var b = s.Replace("-", "").ToUpperInvariant();
+        return a == b;
+    }
+
     static int DepthPct(decimal q, decimal max) => (int)Math.Min(100, q / max * 100);
     static string FormatPrice(decimal p) => p >= 1000 ? p.ToString("F1") : p >= 1 ? p.ToString("F2") : p.ToString("G6");
     static string FormatQty(decimal q) => q >= 100 ? q.ToString("F1") : q.ToString("F3");
 
     void SetVol(string v) => _activeVol = v;
 
+    decimal Qty => decimal.TryParse(_activeVol, System.Globalization.NumberStyles.Any,
+        System.Globalization.CultureInfo.InvariantCulture, out var q) ? q : 0.01m;
+
     async Task OnLevelClick(decimal price, bool isBid)
     {
-        var side = isBid ? "BUY limit" : "SELL limit";
-        await JS.InvokeVoidAsync("showToast", $"{side} @ {FormatPrice(price)} · {_activeVol} · {Symbol}");
+        _busy = true;
+        var side = isBid ? OrderSide.Buy : OrderSide.Sell;
+        var (ok, msg, _) = await Trading.PlaceLimitAsync(Symbol, side, Qty, price, Exchange);
+        _busy = false;
+        await JS.InvokeVoidAsync("showToast", ok ? msg : $"ERR: {msg}");
     }
 
-    async Task OnBuy() => await JS.InvokeVoidAsync("showToast", $"BUY market {_activeVol} · {Symbol}");
-    async Task OnSell() => await JS.InvokeVoidAsync("showToast", $"SELL market {_activeVol} · {Symbol}");
+    async Task OnBuy()
+    {
+        _busy = true;
+        var (ok, msg, _) = await Trading.PlaceMarketAsync(Symbol, OrderSide.Buy, Qty, Exchange);
+        _busy = false;
+        await JS.InvokeVoidAsync("showToast", ok ? msg : $"ERR: {msg}");
+    }
+
+    async Task OnSell()
+    {
+        _busy = true;
+        var (ok, msg, _) = await Trading.PlaceMarketAsync(Symbol, OrderSide.Sell, Qty, Exchange);
+        _busy = false;
+        await JS.InvokeVoidAsync("showToast", ok ? msg : $"ERR: {msg}");
+    }
 
     public void Dispose()
     {

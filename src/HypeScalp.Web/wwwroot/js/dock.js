@@ -96,3 +96,34 @@ window.hypeChart = {
     });
   }
 };
+
+window.hypeLayout = {
+  save: function () {
+    const wins = [];
+    document.querySelectorAll('.win[data-win]').forEach(w => {
+      wins.push({
+        id: w.getAttribute('data-win'),
+        left: w.style.left,
+        top: w.style.top,
+        width: w.style.width,
+        height: w.style.height
+      });
+    });
+    localStorage.setItem('hypescalp.layout', JSON.stringify(wins));
+  },
+  restore: function () {
+    try {
+      const raw = localStorage.getItem('hypescalp.layout');
+      if (!raw) return;
+      const wins = JSON.parse(raw);
+      wins.forEach(s => {
+        const el = document.querySelector('.win[data-win="' + s.id + '"]');
+        if (!el) return;
+        if (s.left) el.style.left = s.left;
+        if (s.top) el.style.top = s.top;
+        if (s.width) el.style.width = s.width;
+        if (s.height) el.style.height = s.height;
+      });
+    } catch (e) { /* ignore */ }
+  }
+};

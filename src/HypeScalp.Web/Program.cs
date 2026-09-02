@@ -9,7 +9,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-// Data Protection — encrypts API secrets at rest
 var keysPath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "keys");
 Directory.CreateDirectory(keysPath);
 builder.Services.AddDataProtection()
@@ -20,6 +19,7 @@ builder.Services.AddSingleton<IExchangeClientFactory, ExchangeClientFactory>();
 builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<ConnectionManager>();
 builder.Services.AddSingleton<MarketDataHub>();
+builder.Services.AddSingleton<TradingService>();
 
 var app = builder.Build();
 
