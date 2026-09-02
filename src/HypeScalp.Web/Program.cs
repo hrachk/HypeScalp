@@ -25,6 +25,7 @@ builder.Services.AddSingleton<ConnectionManager>();
 builder.Services.AddSingleton<MarketDataHub>();
 builder.Services.AddSingleton<TradingService>();
 builder.Services.AddHostedService<MarketBroadcastService>();
+builder.Services.AddHostedService<FundingFeedService>();
 
 var app = builder.Build();
 

@@ -24,14 +24,13 @@ public abstract class BaseExchangeClient : IExchangeClient
     public abstract Task<IReadOnlyList<string>> GetSymbolsAsync();
     public abstract Task<Order> PlaceOrderAsync(string symbol, OrderSide side, OrderType type, decimal quantity, decimal? price = null);
     public abstract Task CancelAllOrdersAsync(string symbol);
+    public abstract Task CancelOrderAsync(string symbol, string orderId);
+    public abstract Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string? symbol = null);
     public abstract Task<IReadOnlyList<Position>> GetPositionsAsync();
 
     protected void RaiseOrderBook(OrderBookSnapshot s) => OnOrderBookUpdate?.Invoke(s);
     protected void RaiseTrade(TradeTick t) => OnTrade?.Invoke(t);
     protected void RaiseError(string m) => OnError?.Invoke(m);
 
-    public virtual async ValueTask DisposeAsync()
-    {
-        await DisconnectAsync();
-    }
+    public virtual async ValueTask DisposeAsync() => await DisconnectAsync();
 }

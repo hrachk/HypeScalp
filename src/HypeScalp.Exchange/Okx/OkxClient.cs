@@ -30,6 +30,9 @@ public class OkxClient : BaseExchangeClient
     public override Task<Order> PlaceOrderAsync(string symbol, OrderSide side, OrderType type, decimal quantity, decimal? price = null)
         => throw new NotImplementedException("OKX — implement signed request");
     public override Task CancelAllOrdersAsync(string symbol) => Task.CompletedTask;
+    public override Task CancelOrderAsync(string symbol, string orderId) => Task.CompletedTask;
+    public override Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string? symbol = null) =>
+        Task.FromResult<IReadOnlyList<Order>>(Array.Empty<Order>());
     public override Task<IReadOnlyList<Position>> GetPositionsAsync() =>
         Task.FromResult<IReadOnlyList<Position>>(Array.Empty<Position>());
 }

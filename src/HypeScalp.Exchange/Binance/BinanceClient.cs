@@ -112,6 +112,38 @@ public class BinanceClient : BaseExchangeClient
         };
     }
 
+
+    public override async Task CancelOrderAsync(string symbol, string orderId)
+    {
+        var path = _futures ? "/fapi/v1/order" : "/api/v3/order";
+        var qs = $"symbol={symbol.ToUpperInvariant()}&orderId={orderId}&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        var resp = await _http.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"{path}?{qs}&signature={Sign(qs)}"));
+        if (!resp.IsSuccessStatusCode)
+            throw new Exception(await resp.Content.ReadAsStringAsync());
+    }
+
+    public override async Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string? symbol = null)
+    {
+        var path = _futures ? "/fapi/v1/openOrders" : "/api/v3/openOrders";
+        var qs = $"timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        if (!string.IsNullOrEmpty(symbol))
+            qs = $"symbol={symbol.ToUpperInvariant()}&{qs}";
+        var resp = await _http.GetAsync($"{path}?{qs}&signature={Sign(qs)}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        return doc.RootElement.EnumerateArray().Select(o => new Order
+        {
+            OrderId = o.GetProperty("orderId").GetRawText(),
+            Symbol = o.GetProperty("symbol").GetString()!,
+            Exchange = ExchangeType.Binance,
+            Side = o.GetProperty("side").GetString() == "BUY" ? OrderSide.Buy : OrderSide.Sell,
+            Type = o.GetProperty("type").GetString() == "MARKET" ? OrderType.Market : OrderType.Limit,
+            Price = decimal.Parse(o.GetProperty("price").GetString()!, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture),
+            Quantity = decimal.Parse(o.GetProperty("origQty").GetString()!, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture),
+            Status = OrderStatus.New
+        }).ToList();
+    }
+
     public override async Task CancelAllOrdersAsync(string symbol)
     {
         var path = _futures ? "/fapi/v1/allOpenOrders" : "/api/v3/openOrders";

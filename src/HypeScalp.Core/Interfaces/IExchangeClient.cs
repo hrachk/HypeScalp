@@ -18,10 +18,7 @@ public interface IExchangeClient : IAsyncDisposable
     Task<IReadOnlyList<string>> GetSymbolsAsync();
     Task<Order> PlaceOrderAsync(string symbol, OrderSide side, OrderType type, decimal quantity, decimal? price = null);
     Task CancelAllOrdersAsync(string symbol);
+    Task CancelOrderAsync(string symbol, string orderId);
+    Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string? symbol = null);
     Task<IReadOnlyList<Position>> GetPositionsAsync();
-}
-
-public interface IExchangeClientFactory
-{
-    IExchangeClient Create(ExchangeConnection connection);
 }

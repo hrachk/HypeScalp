@@ -613,6 +613,22 @@
   }
   .hs-modal-actions { display:flex; gap:8px; margin-top:14px; justify-content:flex-end; }
 
+
+  .level .own-flag {
+    position: absolute; left: 2px; top: 1px; bottom: 1px;
+    width: 3px; border-radius: 1px; z-index: 2;
+  }
+  .level .own-flag.buy { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+  .level .own-flag.sell { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); }
+  .level.has-own { background: rgba(0,245,212,0.06); }
+  .pos-row {
+    display:grid; grid-template-columns: 1.2fr 0.7fr 0.9fr 0.9fr 0.8fr;
+    gap:6px; padding:6px 8px; border-bottom:1px solid var(--border);
+    font-family:var(--mono); font-size:11px; align-items:center;
+  }
+  .pos-row header { color:var(--text-muted); font-size:9px; text-transform:uppercase; }
+  .pos-actions button { padding:2px 8px; font-size:10px; }
+
 </style>
 </head>
 <body>
@@ -1190,38 +1206,19 @@ function createWatchlistWindow() {
 
 function createPositionsWindow() {
   const body = `
-    <div class="pos-tabs">
-      <div class="pos-tab active">Positions</div>
-      <div class="pos-tab">Orders</div>
-      <div class="pos-tab">History</div>
-    </div>
-    <div class="pos-list">
-      <div class="pos-row">
-        <div><div class="sym">BTCUSDT</div><div class="side-long">LONG · Binance</div></div>
-        <div class="num">0.12</div><div class="num">67840</div><div class="num pnl-pos">+84.2</div>
-      </div>
-      <div class="pos-row">
-        <div><div class="sym">SOLUSDT</div><div class="side-short">SHORT · OKX</div></div>
-        <div class="num">42</div><div class="num">148.2</div><div class="num pnl-neg">-18.4</div>
-      </div>
-      <div class="pos-row">
-        <div><div class="sym">ETHUSDT</div><div class="side-long">LONG · Bybit</div></div>
-        <div class="num">1.5</div><div class="num">3421</div><div class="num pnl-pos">+12.8</div>
-      </div>
-    </div>
-  `;
+    <div class="pos-tabs"><div class="pos-tab active">Positions</div><div class="pos-tab">Open Orders</div></div>
+    <div id="livePositionsBody" style="overflow:auto;flex:1">
+      <div style="padding:12px;color:var(--text-muted);font-size:11px">Loading positions…</div>
+    </div>`;
   createWindow({
-    title: 'POSITIONS & ORDERS',
+    title: 'POSITIONS · LIVE',
     type: 'positions',
-    w: 320, h: 280,
+    w: 340,
+    h: 260,
     body,
     onCreate(el) {
-      el.querySelectorAll('.pos-tab').forEach(t => {
-        t.addEventListener('click', () => {
-          el.querySelectorAll('.pos-tab').forEach(x => x.classList.remove('active'));
-          t.classList.add('active');
-        });
-      });
+      TradeAPI.refreshPositions();
+      TradeAPI.refreshOrders();
     }
   });
 }
@@ -1371,6 +1368,7 @@ window.TradeAPI = {
       const r = await this.post('market', this.payload({ side }));
       showToast(r.ok ? ('OK ' + (r.data.message || side)) : ('ERR ' + (r.data.message || r.data.Message || 'failed')));
       if (r.ok && typeof beep === 'function') beep();
+      if (r.ok) { this.refreshOrders(); this.refreshPositions(); }
       return r;
     } catch (e) {
       showToast('ERR network: ' + e.message);
@@ -1384,6 +1382,7 @@ window.TradeAPI = {
       const r = await this.post('limit', this.payload({ side, price: Number(price) }));
       showToast(r.ok ? ('OK ' + (r.data.message || r.data.Message)) : ('ERR ' + (r.data.message || r.data.Message || 'failed')));
       if (r.ok && typeof beep === 'function') beep();
+      if (r.ok) { this.refreshOrders(); this.refreshPositions(); }
       return r;
     } catch (e) {
       showToast('ERR network: ' + e.message);
@@ -1396,6 +1395,7 @@ window.TradeAPI = {
     try {
       const r = await this.post('cancel-all', this.payload());
       showToast(r.ok ? ('OK ' + (r.data.message || 'cancel all')) : ('ERR ' + (r.data.message || r.data.Message)));
+      if (r.ok) this.refreshOrders();
       return r;
     } catch (e) {
       showToast('ERR ' + e.message);
@@ -1409,6 +1409,7 @@ window.TradeAPI = {
       const r = await this.post('flatten', this.payload());
       showToast(r.ok ? ('OK ' + (r.data.message || 'flatten')) : ('ERR ' + (r.data.message || r.data.Message)));
       if (r.ok && typeof beep === 'function') beep();
+      if (r.ok) { this.refreshOrders(); this.refreshPositions(); }
       return r;
     } catch (e) {
       showToast('ERR ' + e.message);
@@ -1424,8 +1425,96 @@ window.TradeAPI = {
       const q = parseFloat(activeVol.textContent);
       if (!isNaN(q)) this.qty = q;
     }
+  },
+
+  openOrders: [],
+  positions: [],
+
+  async refreshOrders() {
+    try {
+      const q = new URLSearchParams();
+      if (this.activeSymbol) q.set('symbol', this.activeSymbol);
+      if (this.activeExchange) q.set('exchange', this.activeExchange);
+      const res = await fetch('/api/trade/orders?' + q.toString());
+      this.openOrders = await res.json();
+      this.paintOrderFlags();
+    } catch {}
+  },
+
+  async refreshPositions() {
+    try {
+      const res = await fetch('/api/trade/positions');
+      this.positions = await res.json();
+      this.paintPositions();
+    } catch {}
+  },
+
+  paintOrderFlags() {
+    const orders = this.openOrders || [];
+    const byPrice = {};
+    orders.forEach(o => {
+      const pr = Number(o.price || o.Price || 0);
+      if (!pr) return;
+      const key = pr.toFixed(4);
+      byPrice[key] = o;
+    });
+    document.querySelectorAll('.win .ladder-col .level').forEach(lvl => {
+      if (lvl.classList.contains('mid')) return;
+      const priceEl = lvl.querySelector('.price');
+      if (!priceEl) return;
+      const pr = parseFloat(priceEl.textContent.replace(/,/g,''));
+      if (isNaN(pr)) return;
+      // match within small epsilon via fixed strings
+      let match = null;
+      Object.keys(byPrice).forEach(k => {
+        if (Math.abs(parseFloat(k) - pr) < pr * 1e-8 + 1e-8) match = byPrice[k];
+      });
+      lvl.querySelectorAll('.own-flag').forEach(f => f.remove());
+      lvl.classList.remove('has-own');
+      if (!match) return;
+      const side = (match.side || match.Side || '').toString().toLowerCase();
+      const isBuy = side === 'buy' || side === '0';
+      const flag = document.createElement('div');
+      flag.className = 'own-flag ' + (isBuy ? 'buy' : 'sell');
+      flag.title = (isBuy ? 'BUY' : 'SELL') + ' ' + (match.quantity || match.Quantity || '') + ' #' + (match.orderId || match.OrderId || '');
+      flag.style.position = 'absolute';
+      lvl.style.position = 'relative';
+      lvl.classList.add('has-own');
+      lvl.appendChild(flag);
+    });
+  },
+
+  paintPositions() {
+    const box = document.getElementById('livePositionsBody');
+    if (!box) return;
+    const list = this.positions || [];
+    if (!list.length) {
+      box.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:11px">No open positions. Connect API + trade.</div>';
+      return;
+    }
+    let html = `<div class="pos-row header"><div>Symbol</div><div>Side</div><div>Size</div><div>Entry</div><div>uPnL</div></div>`;
+    list.forEach(p => {
+      const size = Number(p.size ?? p.Size ?? 0);
+      const side = size >= 0 ? 'LONG' : 'SHORT';
+      const pnl = Number(p.unrealizedPnl ?? p.UnrealizedPnl ?? 0);
+      const entry = Number(p.entryPrice ?? p.EntryPrice ?? 0);
+      const sym = p.symbol || p.Symbol || '';
+      const cls = pnl >= 0 ? 'pos' : 'neg';
+      html += `<div class="pos-row">
+        <div>${sym}</div>
+        <div style="color:${size>=0?'var(--lime)':'var(--magenta)'}">${side}</div>
+        <div>${Math.abs(size)}</div>
+        <div>${entry}</div>
+        <div class="${cls}">${pnl.toFixed(2)}</div>
+      </div>`;
+    });
+    box.innerHTML = html;
   }
 };
+
+// Poll orders + positions
+setInterval(() => { TradeAPI.refreshOrders(); TradeAPI.refreshPositions(); }, 2000);
+
 
 // Poll trade readiness
 setTimeout(async () => {
@@ -1603,6 +1692,7 @@ const _oldConnect = window.__hsConnectPatched;
       if (!ladder) return;
       ladder.innerHTML = renderLiveLadder(msg.asks || [], msg.bids || [], msg.mid, msg.spread || 0);
       w.el.dataset.live = '1';
+      if (window.TradeAPI) TradeAPI.paintOrderFlags();
     });
   }
 
@@ -1629,6 +1719,35 @@ const _oldConnect = window.__hsConnectPatched;
         .build();
       conn.on('orderBook', applyBook);
       conn.on('trade', applyTrade);
+      conn.on('funding', function (msg) {
+        const mark = document.getElementById('fundMark');
+        const idx = document.getElementById('fundIndex');
+        const rate = document.getElementById('fundRate');
+        const next = document.getElementById('fundNext');
+        if (mark) mark.textContent = Number(msg.mark).toFixed(2);
+        if (idx) idx.textContent = Number(msg.index).toFixed(2);
+        if (rate) {
+          const r = Number(msg.funding) * 100;
+          rate.textContent = r.toFixed(4) + '%';
+          rate.style.color = r >= 0 ? 'var(--lime)' : 'var(--magenta)';
+        }
+        if (next && msg.nextFundingTime) {
+          const d = new Date(Number(msg.nextFundingTime));
+          next.textContent = d.toLocaleTimeString();
+        }
+        // Update DOM meta marks for matching symbol
+        document.querySelectorAll('.dom-meta').forEach(meta => {
+          const win = meta.closest('.win');
+          if (!win) return;
+          const pair = (win.dataset.pair || '').replace(/[-_]/g,'').toUpperCase();
+          const sym = (msg.symbol || '').replace(/[-_]/g,'').toUpperCase();
+          if (pair && sym && pair !== sym) return;
+          const marks = meta.querySelectorAll('b');
+          if (marks[0]) marks[0].textContent = Number(msg.mark).toFixed(2);
+          if (marks[1]) marks[1].textContent = Number(msg.index).toFixed(2);
+          if (marks[2]) marks[2].textContent = (Number(msg.funding)*100).toFixed(4) + '%';
+        });
+      });
       await conn.start();
       console.log('[HypeScalp] SignalR connected');
       showToast('Live feed connected'); const fs=document.getElementById('feedStatus'); if(fs){fs.textContent='LIVE'; fs.style.color='var(--lime)';}

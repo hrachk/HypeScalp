@@ -1,21 +1,24 @@
+using System.Collections.Concurrent;
 using HypeScalp.Core.Interfaces;
 using HypeScalp.Core.Models;
 
 namespace HypeScalp.Web.Services;
 
-/// <summary>
-/// Fast-path trading: market/limit/cancel/flatten through connected exchange clients.
-/// </summary>
 public class TradingService
 {
     private readonly ConnectionManager _connections;
     private readonly ILogger<TradingService> _log;
+    // Local cache of open orders for ladder flags (updated after place/cancel + poll)
+    private readonly ConcurrentDictionary<string, Order> _openOrders = new(StringComparer.OrdinalIgnoreCase);
 
     public TradingService(ConnectionManager connections, ILogger<TradingService> log)
     {
         _connections = connections;
         _log = log;
     }
+
+    public event Action? OnOrdersChanged;
+    public event Action? OnPositionsChanged;
 
     public IReadOnlyList<object> ListConnections() =>
         _connections.Connections.Select(c => new
@@ -57,7 +60,6 @@ public class TradingService
         var client = ResolveClient(exchange);
         if (client == null)
             return TradeResult.Fail("NO_CONNECTION", "No connected exchange. Open /settings and Connect API keys.");
-
         if (quantity <= 0)
             return TradeResult.Fail("BAD_QTY", "Quantity must be > 0");
 
@@ -65,6 +67,7 @@ public class TradingService
         {
             var order = await client.PlaceOrderAsync(NormalizeSymbol(client.Exchange, symbol), side, OrderType.Market, quantity);
             _log.LogInformation("MARKET {Side} {Qty} {Symbol} via {Ex} -> {Id}", side, quantity, symbol, client.Exchange, order.OrderId);
+            OnPositionsChanged?.Invoke();
             return TradeResult.Ok($"MARKET {side} {quantity} {symbol}", order, client.Exchange);
         }
         catch (Exception ex)
@@ -79,14 +82,15 @@ public class TradingService
         var client = ResolveClient(exchange);
         if (client == null)
             return TradeResult.Fail("NO_CONNECTION", "No connected exchange. Open /settings and Connect API keys.");
-
         if (quantity <= 0 || price <= 0)
             return TradeResult.Fail("BAD_ARGS", "Quantity and price must be > 0");
 
         try
         {
             var order = await client.PlaceOrderAsync(NormalizeSymbol(client.Exchange, symbol), side, OrderType.Limit, quantity, price);
+            CacheOrder(order);
             _log.LogInformation("LIMIT {Side} {Qty}@{Price} {Symbol} via {Ex} -> {Id}", side, quantity, price, symbol, client.Exchange, order.OrderId);
+            OnOrdersChanged?.Invoke();
             return TradeResult.Ok($"LIMIT {side} {quantity} @ {price}", order, client.Exchange);
         }
         catch (Exception ex)
@@ -104,7 +108,11 @@ public class TradingService
 
         try
         {
-            await client.CancelAllOrdersAsync(NormalizeSymbol(client.Exchange, symbol));
+            var sym = NormalizeSymbol(client.Exchange, symbol);
+            await client.CancelAllOrdersAsync(sym);
+            foreach (var key in _openOrders.Keys.Where(k => k.Contains(sym, StringComparison.OrdinalIgnoreCase)).ToList())
+                _openOrders.TryRemove(key, out _);
+            OnOrdersChanged?.Invoke();
             _log.LogInformation("CANCEL ALL {Symbol} via {Ex}", symbol, client.Exchange);
             return TradeResult.Ok($"CANCEL ALL {symbol}", null, client.Exchange);
         }
@@ -115,7 +123,25 @@ public class TradingService
         }
     }
 
-    /// <summary>Close position with reduce-only market (best-effort: market opposite side for full size).</summary>
+    public async Task<TradeResult> CancelOrderAsync(string symbol, string orderId, ExchangeType? exchange = null)
+    {
+        var client = ResolveClient(exchange);
+        if (client == null)
+            return TradeResult.Fail("NO_CONNECTION", "No connected exchange.");
+        try
+        {
+            var sym = NormalizeSymbol(client.Exchange, symbol);
+            await client.CancelOrderAsync(sym, orderId);
+            _openOrders.TryRemove(OrderKey(client.Exchange, sym, orderId), out _);
+            OnOrdersChanged?.Invoke();
+            return TradeResult.Ok($"CANCEL {orderId}", null, client.Exchange);
+        }
+        catch (Exception ex)
+        {
+            return TradeResult.Fail("EXCHANGE", ex.Message);
+        }
+    }
+
     public async Task<TradeResult> FlattenAsync(string symbol, ExchangeType? exchange = null)
     {
         var client = ResolveClient(exchange);
@@ -126,23 +152,18 @@ public class TradingService
         {
             var positions = await client.GetPositionsAsync();
             var sym = NormalizeSymbol(client.Exchange, symbol);
-            var pos = positions.FirstOrDefault(p =>
-                p.Symbol.Equals(sym, StringComparison.OrdinalIgnoreCase) ||
-                p.Symbol.Replace("_", "").Replace("-", "")
-                    .Equals(sym.Replace("_", "").Replace("-", ""), StringComparison.OrdinalIgnoreCase));
-
+            var pos = positions.FirstOrDefault(p => NormSym(p.Symbol) == NormSym(sym));
             if (pos == null || pos.Size == 0)
                 return TradeResult.Ok($"No open position on {symbol}", null, client.Exchange);
 
             var side = pos.Size > 0 ? OrderSide.Sell : OrderSide.Buy;
             var qty = Math.Abs(pos.Size);
             var order = await client.PlaceOrderAsync(pos.Symbol, side, OrderType.Market, qty);
-            _log.LogInformation("FLATTEN {Symbol} size={Size} via {Ex}", symbol, pos.Size, client.Exchange);
+            OnPositionsChanged?.Invoke();
             return TradeResult.Ok($"FLATTEN {side} {qty} {symbol}", order, client.Exchange);
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Flatten failed");
             return TradeResult.Fail("EXCHANGE", ex.Message);
         }
     }
@@ -154,6 +175,37 @@ public class TradingService
         try { return await client.GetPositionsAsync(); }
         catch { return Array.Empty<Position>(); }
     }
+
+    public async Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string? symbol = null, ExchangeType? exchange = null)
+    {
+        var client = ResolveClient(exchange);
+        if (client == null)
+            return _openOrders.Values.Where(o => symbol == null || NormSym(o.Symbol) == NormSym(symbol)).ToList();
+
+        try
+        {
+            var sym = symbol == null ? null : NormalizeSymbol(client.Exchange, symbol);
+            var remote = await client.GetOpenOrdersAsync(sym);
+            // Refresh cache for this symbol
+            if (sym != null)
+            {
+                foreach (var k in _openOrders.Keys.Where(k => k.Contains(sym, StringComparison.OrdinalIgnoreCase)).ToList())
+                    _openOrders.TryRemove(k, out _);
+            }
+            foreach (var o in remote) CacheOrder(o);
+            return remote;
+        }
+        catch
+        {
+            return _openOrders.Values.Where(o => symbol == null || NormSym(o.Symbol) == NormSym(symbol)).ToList();
+        }
+    }
+
+    private void CacheOrder(Order o) =>
+        _openOrders[OrderKey(o.Exchange, o.Symbol, o.OrderId)] = o;
+
+    private static string OrderKey(ExchangeType ex, string symbol, string id) => $"{ex}:{symbol}:{id}";
+    private static string NormSym(string s) => s.Replace("-", "").Replace("_", "").ToUpperInvariant();
 
     private static string NormalizeSymbol(ExchangeType ex, string symbol)
     {
@@ -177,17 +229,11 @@ public sealed class TradeResult
 
     public static TradeResult Ok(string message, Order? order, ExchangeType? ex = null) => new()
     {
-        Ok = true,
-        Code = "OK",
-        Message = message,
-        OrderId = order?.OrderId,
-        Exchange = ex?.ToString()
+        Ok = true, Code = "OK", Message = message, OrderId = order?.OrderId, Exchange = ex?.ToString()
     };
 
     public static TradeResult Fail(string code, string message) => new()
     {
-        Ok = false,
-        Code = code,
-        Message = message
+        Ok = false, Code = code, Message = message
     };
 }

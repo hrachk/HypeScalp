@@ -25,9 +25,8 @@ public static class TradingEndpoints
         {
             if (!TrySide(req.Side, out var side))
                 return Results.BadRequest(new { ok = false, message = "side must be buy|sell" });
-            TradingService.TryParseExchange(req.Exchange, out var ex);
-            var r = await trading.PlaceMarketAsync(req.Symbol, side, req.Quantity,
-                string.IsNullOrWhiteSpace(req.Exchange) ? null : ex);
+            var ex = ParseEx(req.Exchange);
+            var r = await trading.PlaceMarketAsync(req.Symbol, side, req.Quantity, ex);
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
@@ -37,46 +36,54 @@ public static class TradingEndpoints
                 return Results.BadRequest(new { ok = false, message = "side must be buy|sell" });
             if (req.Price is null or <= 0)
                 return Results.BadRequest(new { ok = false, message = "price required for limit" });
-            TradingService.TryParseExchange(req.Exchange, out var ex);
-            var r = await trading.PlaceLimitAsync(req.Symbol, side, req.Quantity, req.Price.Value,
-                string.IsNullOrWhiteSpace(req.Exchange) ? null : ex);
+            var ex = ParseEx(req.Exchange);
+            var r = await trading.PlaceLimitAsync(req.Symbol, side, req.Quantity, req.Price.Value, ex);
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
         g.MapPost("/cancel-all", async (TradeRequest req, TradingService trading) =>
         {
-            TradingService.TryParseExchange(req.Exchange, out var ex);
-            var r = await trading.CancelAllAsync(req.Symbol,
-                string.IsNullOrWhiteSpace(req.Exchange) ? null : ex);
+            var r = await trading.CancelAllAsync(req.Symbol, ParseEx(req.Exchange));
+            return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
+        });
+
+        g.MapPost("/cancel", async (CancelRequest req, TradingService trading) =>
+        {
+            var r = await trading.CancelOrderAsync(req.Symbol, req.OrderId, ParseEx(req.Exchange));
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
         g.MapPost("/flatten", async (TradeRequest req, TradingService trading) =>
         {
-            TradingService.TryParseExchange(req.Exchange, out var ex);
-            var r = await trading.FlattenAsync(req.Symbol,
-                string.IsNullOrWhiteSpace(req.Exchange) ? null : ex);
+            var r = await trading.FlattenAsync(req.Symbol, ParseEx(req.Exchange));
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
         g.MapGet("/positions", async (string? exchange, TradingService trading) =>
         {
-            ExchangeType? ex = null;
-            if (!string.IsNullOrWhiteSpace(exchange) && TradingService.TryParseExchange(exchange, out var parsed))
-                ex = parsed;
-            var list = await trading.GetPositionsAsync(ex);
+            var list = await trading.GetPositionsAsync(ParseEx(exchange));
             return Results.Ok(list);
         });
+
+        g.MapGet("/orders", async (string? symbol, string? exchange, TradingService trading) =>
+        {
+            var list = await trading.GetOpenOrdersAsync(symbol, ParseEx(exchange));
+            return Results.Ok(list);
+        });
+    }
+
+    private static ExchangeType? ParseEx(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        return TradingService.TryParseExchange(name, out var ex) ? ex : null;
     }
 
     private static bool TrySide(string? s, out OrderSide side)
     {
         side = OrderSide.Buy;
         if (string.IsNullOrWhiteSpace(s)) return false;
-        if (s.Equals("buy", StringComparison.OrdinalIgnoreCase) || s.Equals("long", StringComparison.OrdinalIgnoreCase))
-        { side = OrderSide.Buy; return true; }
-        if (s.Equals("sell", StringComparison.OrdinalIgnoreCase) || s.Equals("short", StringComparison.OrdinalIgnoreCase))
-        { side = OrderSide.Sell; return true; }
+        if (s.Equals("buy", StringComparison.OrdinalIgnoreCase)) { side = OrderSide.Buy; return true; }
+        if (s.Equals("sell", StringComparison.OrdinalIgnoreCase)) { side = OrderSide.Sell; return true; }
         return false;
     }
 
@@ -86,6 +93,13 @@ public static class TradingEndpoints
         public string Side { get; set; } = "buy";
         public decimal Quantity { get; set; } = 0.01m;
         public decimal? Price { get; set; }
+        public string? Exchange { get; set; }
+    }
+
+    public sealed class CancelRequest
+    {
+        public string Symbol { get; set; } = "BTCUSDT";
+        public string OrderId { get; set; } = "";
         public string? Exchange { get; set; }
     }
 }
