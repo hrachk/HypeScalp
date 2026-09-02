@@ -30,8 +30,8 @@ public class MarketDataHub : IAsyncDisposable
         var key = MakeKey(exchange, symbol);
         if (_subs.ContainsKey(key)) return;
 
-        var url = BuildUrl(exchange, symbol, futures);
-        if (url == null)
+        var urls = BuildUrls(exchange, symbol, futures);
+        if (urls.Length == 0)
         {
             _log.LogWarning("No public WS URL for {Exchange} {Symbol}", exchange, symbol);
             return;
@@ -40,7 +40,7 @@ public class MarketDataHub : IAsyncDisposable
         var sub = new Subscription(key, exchange, symbol, futures);
         if (!_subs.TryAdd(key, sub)) return;
 
-        _ = Task.Run(() => RunLoopAsync(sub, url), ct);
+        _ = Task.Run(() => RunLoopAsync(sub, urls), ct);
         await Task.CompletedTask;
     }
 
@@ -77,37 +77,53 @@ public class MarketDataHub : IAsyncDisposable
         };
     }
 
-    private static string? BuildUrl(ExchangeType ex, string symbol, bool futures)
+    private static string[] BuildUrls(ExchangeType ex, string symbol, bool futures)
     {
         var s = symbol.ToLowerInvariant();
         return ex switch
         {
-            ExchangeType.Binance => futures
-                ? $"wss://fstream.binance.com/stream?streams={s}@depth20@100ms/{s}@aggTrade"
-                : $"wss://stream.binance.com:9443/stream?streams={s}@depth20@100ms/{s}@aggTrade",
-            ExchangeType.Bybit => futures
-                ? "wss://stream.bybit.com/v5/public/linear"
-                : "wss://stream.bybit.com/v5/public/spot",
-            ExchangeType.Okx => "wss://ws.okx.com:8443/ws/v5/public",
-            ExchangeType.Gate => futures
-                ? "wss://fx-ws.gateio.ws/v4/ws/usdt"
-                : "wss://api.gateio.ws/ws/v4/",
-            _ => null
+            ExchangeType.Binance => new[]
+            {
+                futures
+                    ? $"wss://fstream.binance.com/stream?streams={s}@depth20@100ms/{s}@aggTrade"
+                    : $"wss://stream.binance.com:9443/stream?streams={s}@depth20@100ms/{s}@aggTrade"
+            },
+            ExchangeType.Bybit => new[]
+            {
+                futures ? "wss://stream.bybit.com/v5/public/linear" : "wss://stream.bybit.com/v5/public/spot"
+            },
+            // OKX: several public endpoints (region / CDN differences)
+            ExchangeType.Okx => new[]
+            {
+                "wss://ws.okx.com:8443/ws/v5/public",
+                "wss://wsaws.okx.com:8443/ws/v5/public",
+                "wss://wspap.okx.com:8443/ws/v5/public"
+            },
+            ExchangeType.Gate => new[]
+            {
+                futures ? "wss://fx-ws.gateio.ws/v4/ws/usdt" : "wss://api.gateio.ws/ws/v4/",
+                futures ? "wss://fx-ws.gateio.ws/v4/ws/usdt" : "wss://api.gateio.ws/ws/v4/"
+            },
+            _ => Array.Empty<string>()
         };
     }
 
-    private async Task RunLoopAsync(Subscription sub, string url)
+    private async Task RunLoopAsync(Subscription sub, string[] urls)
     {
         var backoff = 1000;
+        var urlIndex = 0;
         while (!sub.Cts.IsCancellationRequested)
         {
+            var url = urls[urlIndex % urls.Length];
             try
             {
                 using var ws = new ClientWebSocket();
                 sub.Ws = ws;
-                await ws.ConnectAsync(new Uri(url), sub.Cts.Token);
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(sub.Cts.Token);
+                connectCts.CancelAfter(TimeSpan.FromSeconds(8));
+                await ws.ConnectAsync(new Uri(url), connectCts.Token);
                 await SendSubscribeAsync(ws, sub);
-                _log.LogInformation("WS connected {Key}", sub.Key);
+                _log.LogInformation("WS connected {Key} via {Url}", sub.Key, url);
                 backoff = 1000;
 
                 var buffer = new byte[128 * 1024];
@@ -126,11 +142,19 @@ public class MarketDataHub : IAsyncDisposable
                     HandleMessage(sub, Encoding.UTF8.GetString(ms.ToArray()));
                 }
             }
-            catch (OperationCanceledException) { break; }
+            catch (OperationCanceledException) when (sub.Cts.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "WS error {Key}, retry {Ms}ms", sub.Key, backoff);
-                await Task.Delay(backoff, CancellationToken.None);
+                urlIndex++;
+                var refused = ex is System.Net.WebSockets.WebSocketException
+                    || ex.InnerException is System.Net.Http.HttpRequestException
+                    || ex.InnerException is System.Net.Sockets.SocketException;
+                if (refused)
+                    _log.LogWarning("WS unreachable {Key} ({Url}), try next in {Ms}ms", sub.Key, url, backoff);
+                else
+                    _log.LogWarning(ex, "WS error {Key}, retry {Ms}ms", sub.Key, backoff);
+                try { await Task.Delay(backoff, sub.Cts.Token); }
+                catch (OperationCanceledException) { break; }
                 backoff = Math.Min(backoff * 2, 15000);
             }
         }

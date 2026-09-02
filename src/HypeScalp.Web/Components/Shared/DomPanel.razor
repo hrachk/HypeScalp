@@ -6,7 +6,7 @@
 
 <div class="dom-body">
     <div class="clusters-col">
-        @foreach (var delta in _clusters)
+        @foreach (var delta in _clustersView)
         {
             <div style="height:17px;display:flex;align-items:center;justify-content:center;position:relative">
                 <div style="position:absolute;left:0;top:0;bottom:0;opacity:0.3;width:@Math.Min(100, (double)Math.Abs(delta) * 3)%;background:@(delta >= 0 ? "var(--bid)" : "var(--ask)")"></div>
@@ -15,7 +15,7 @@
         }
     </div>
     <div class="ladder-col">
-        @foreach (var l in _asks)
+        @foreach (var l in _asksView)
         {
             <div class="level ask @(l.IsWall ? "wall" : "")" @onclick="() => OnLevelClick(l.Price, false)">
                 <div class="depth-bar" style="width:@DepthPct(l.Quantity, _maxAsk)%;background:var(--ask);opacity:@(l.IsWall?0.4:0.18)"></div>
@@ -27,7 +27,7 @@
             <span class="price">@FormatPrice(_mid)</span>
             <span style="text-align:right;color:var(--spread);font-size:9px">@(_spread.ToString("F2"))</span>
         </div>
-        @foreach (var l in _bids)
+        @foreach (var l in _bidsView)
         {
             <div class="level bid @(l.IsWall ? "wall" : "")" @onclick="() => OnLevelClick(l.Price, true)">
                 <div class="depth-bar" style="width:@DepthPct(l.Quantity, _maxBid)%;background:var(--bid);opacity:@(l.IsWall?0.4:0.18)"></div>
@@ -37,7 +37,7 @@
         }
     </div>
     <div class="tape-col">
-        @foreach (var t in _tape)
+        @foreach (var t in _tapeView)
         {
             <div style="height:17px;padding:0 4px;display:flex;align-items:center;justify-content:space-between;@(t.IsLarge?"background:rgba(255,159,28,0.12)":"")">
                 <span style="color:@(t.IsBuy?"var(--bid)":"var(--ask)");font-weight:600">@(t.IsBuy?"▲":"▼") @FormatQty(t.Quantity)</span>
@@ -54,7 +54,7 @@
     <button class="trade-btn buy" @onclick="OnBuy" disabled="@_busy">BUY</button>
     <button class="trade-btn sell" @onclick="OnSell" disabled="@_busy">SELL</button>
     <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-dim)">
-        @(_live ? "LIVE" : "…") @Exchange · @Symbol
+        @(_live ? "LIVE" : _status) · @Exchange · @Symbol
     </span>
 </div>
 
@@ -64,23 +64,43 @@
     [Parameter] public ExchangeType Exchange { get; set; } = ExchangeType.Binance;
 
     bool _live, _busy;
+    string _status = "…";
     decimal _mid, _spread, _maxAsk = 1, _maxBid = 1;
-    List<OrderBookLevel> _asks = new();
-    List<OrderBookLevel> _bids = new();
-    List<TradeTick> _tape = new();
-    List<decimal> _clusters = new();
+
+    // Mutable under lock
+    readonly List<OrderBookLevel> _asks = new();
+    readonly List<OrderBookLevel> _bids = new();
+    readonly List<TradeTick> _tape = new();
+    readonly List<decimal> _clusters = new();
+
+    // Immutable snapshots for render (never mutated after assign)
+    List<OrderBookLevel> _asksView = new();
+    List<OrderBookLevel> _bidsView = new();
+    List<TradeTick> _tapeView = new();
+    List<decimal> _clustersView = new();
+
     readonly string[] _vols = { "0.01", "0.05", "0.1", "0.5" };
     string _activeVol = "0.01";
     readonly object _lock = new();
     DateTime _lastClusterBucket = DateTime.UtcNow;
     decimal _clusterBuy, _clusterSell;
+    DateTime _lastUi = DateTime.MinValue;
 
     protected override async Task OnInitializedAsync()
     {
         Market.OnOrderBook += HandleBook;
         Market.OnTrade += HandleTrade;
-        await Market.SubscribeAsync(Exchange, Symbol, Futures);
+        try
+        {
+            await Market.SubscribeAsync(Exchange, Symbol, Futures);
+            _status = "conn…";
+        }
+        catch
+        {
+            _status = "err";
+        }
         SeedMock();
+        PublishViews();
     }
 
     void SeedMock()
@@ -88,11 +108,41 @@
         var rnd = new Random(Symbol.GetHashCode() ^ (int)Exchange);
         var mid = Symbol.Contains("BTC") ? 95000m : Symbol.Contains("ETH") ? 3400m : 150m;
         _mid = mid;
-        for (int i = 10; i >= 1; i--)
-            _asks.Add(new OrderBookLevel { Price = mid + i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
-        for (int i = 1; i <= 10; i++)
-            _bids.Add(new OrderBookLevel { Price = mid - i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
-        _clusters = Enumerable.Range(0, 20).Select(_ => (decimal)((rnd.NextDouble() - 0.5) * 20)).ToList();
+        lock (_lock)
+        {
+            _asks.Clear();
+            _bids.Clear();
+            _clusters.Clear();
+            for (int i = 10; i >= 1; i--)
+                _asks.Add(new OrderBookLevel { Price = mid + i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
+            for (int i = 1; i <= 10; i++)
+                _bids.Add(new OrderBookLevel { Price = mid - i * 0.5m, Quantity = (decimal)(rnd.NextDouble() * 5) });
+            for (int i = 0; i < 20; i++)
+                _clusters.Add((decimal)((rnd.NextDouble() - 0.5) * 20));
+        }
+    }
+
+    void PublishViews()
+    {
+        lock (_lock)
+        {
+            _asksView = _asks.ToList();
+            _bidsView = _bids.ToList();
+            _tapeView = _tape.ToList();
+            _clustersView = _clusters.ToList();
+            _maxAsk = Math.Max(0.0001m, _asksView.Count > 0 ? _asksView.Max(a => a.Quantity) : 1);
+            _maxBid = Math.Max(0.0001m, _bidsView.Count > 0 ? _bidsView.Max(b => b.Quantity) : 1);
+        }
+    }
+
+    void RequestUi()
+    {
+        // throttle UI ~10/s to reduce render pressure
+        var now = DateTime.UtcNow;
+        if ((now - _lastUi).TotalMilliseconds < 100) return;
+        _lastUi = now;
+        PublishViews();
+        _ = InvokeAsync(StateHasChanged);
     }
 
     void HandleBook(string key, OrderBookSnapshot snap)
@@ -101,15 +151,16 @@
         if (!SymbolMatch(snap.Symbol)) return;
         lock (_lock)
         {
-            _asks = snap.Asks.Take(12).ToList();
-            _bids = snap.Bids.Take(12).ToList();
-            _maxAsk = Math.Max(0.0001m, _asks.Count > 0 ? _asks.Max(a => a.Quantity) : 1);
-            _maxBid = Math.Max(0.0001m, _bids.Count > 0 ? _bids.Max(b => b.Quantity) : 1);
+            _asks.Clear();
+            _asks.AddRange(snap.Asks.Take(12));
+            _bids.Clear();
+            _bids.AddRange(snap.Bids.Take(12));
             _mid = snap.BestBid > 0 && snap.BestAsk > 0 ? (snap.BestBid + snap.BestAsk) / 2 : _mid;
             _spread = snap.Spread;
             _live = true;
+            _status = "LIVE";
         }
-        _ = InvokeAsync(StateHasChanged);
+        RequestUi();
     }
 
     void HandleTrade(string key, TradeTick t)
@@ -130,7 +181,7 @@
                 _lastClusterBucket = DateTime.UtcNow;
             }
         }
-        _ = InvokeAsync(StateHasChanged);
+        RequestUi();
     }
 
     bool SymbolMatch(string s)
