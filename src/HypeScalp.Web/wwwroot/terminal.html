@@ -1368,7 +1368,7 @@ window.TradeAPI = {
       const r = await this.post('market', this.payload({ side }));
       showToast(r.ok ? ('OK ' + (r.data.message || side)) : ('ERR ' + (r.data.message || r.data.Message || 'failed')));
       if (r.ok && typeof beep === 'function') beep();
-      if (r.ok) { this.refreshOrders(); this.refreshPositions(); }
+      if (r.ok) { this.refreshOrders(true); this.refreshPositions(true); }
       return r;
     } catch (e) {
       showToast('ERR network: ' + e.message);
@@ -1382,7 +1382,7 @@ window.TradeAPI = {
       const r = await this.post('limit', this.payload({ side, price: Number(price) }));
       showToast(r.ok ? ('OK ' + (r.data.message || r.data.Message)) : ('ERR ' + (r.data.message || r.data.Message || 'failed')));
       if (r.ok && typeof beep === 'function') beep();
-      if (r.ok) { this.refreshOrders(); this.refreshPositions(); }
+      if (r.ok) { this.refreshOrders(true); this.refreshPositions(true); }
       return r;
     } catch (e) {
       showToast('ERR network: ' + e.message);
@@ -1395,7 +1395,7 @@ window.TradeAPI = {
     try {
       const r = await this.post('cancel-all', this.payload());
       showToast(r.ok ? ('OK ' + (r.data.message || 'cancel all')) : ('ERR ' + (r.data.message || r.data.Message)));
-      if (r.ok) this.refreshOrders();
+      if (r.ok) this.refreshOrders(true);
       return r;
     } catch (e) {
       showToast('ERR ' + e.message);
@@ -1409,7 +1409,7 @@ window.TradeAPI = {
       const r = await this.post('flatten', this.payload());
       showToast(r.ok ? ('OK ' + (r.data.message || 'flatten')) : ('ERR ' + (r.data.message || r.data.Message)));
       if (r.ok && typeof beep === 'function') beep();
-      if (r.ok) { this.refreshOrders(); this.refreshPositions(); }
+      if (r.ok) { this.refreshOrders(true); this.refreshPositions(true); }
       return r;
     } catch (e) {
       showToast('ERR ' + e.message);
@@ -1430,23 +1430,39 @@ window.TradeAPI = {
   openOrders: [],
   positions: [],
 
-  async refreshOrders() {
+  async refreshOrders(force) {
     try {
       const q = new URLSearchParams();
       if (this.activeSymbol) q.set('symbol', this.activeSymbol);
       if (this.activeExchange) q.set('exchange', this.activeExchange);
+      if (force) q.set('force', 'true');
       const res = await fetch('/api/trade/orders?' + q.toString());
       this.openOrders = await res.json();
       this.paintOrderFlags();
     } catch {}
   },
 
-  async refreshPositions() {
+  async refreshPositions(force) {
     try {
-      const res = await fetch('/api/trade/positions');
+      const q = new URLSearchParams();
+      if (force) q.set('force', 'true');
+      const res = await fetch('/api/trade/positions?' + q.toString());
       this.positions = await res.json();
       this.paintPositions();
     } catch {}
+  },
+
+  async cancelOne(orderId) {
+    if (!orderId || this.busy) return;
+    this.busy = true;
+    try {
+      const r = await this.post('cancel', this.payload({ orderId: String(orderId) }));
+      showToast(r.ok ? ('CANCEL #' + orderId) : ('ERR ' + (r.data.message || r.data.Message)));
+      if (r.ok) { await this.refreshOrders(true); }
+      return r;
+    } catch (e) {
+      showToast('ERR ' + e.message);
+    } finally { this.busy = false; }
   },
 
   paintOrderFlags() {
@@ -1513,7 +1529,15 @@ window.TradeAPI = {
 };
 
 // Poll orders + positions
-setInterval(() => { TradeAPI.refreshOrders(); TradeAPI.refreshPositions(); }, 2000);
+// Safe poll: 8s UI interval; server caches 5s → exchange hit ~1/5–8s max
+setInterval(async () => {
+  try {
+    const st = await TradeAPI.status();
+    if (!st.ready) return;
+    TradeAPI.refreshOrders();
+    TradeAPI.refreshPositions();
+  } catch {}
+}, 8000);
 
 
 // Poll trade readiness
@@ -1527,6 +1551,22 @@ setTimeout(async () => {
     }
   } catch {}
 }, 1200);
+
+
+// Click own order flag → cancel single order
+document.addEventListener('click', e => {
+  const flag = e.target.closest('.own-flag');
+  if (!flag) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const title = flag.title || '';
+  const m = title.match(/#(\S+)/);
+  const id = m ? m[1] : null;
+  if (!id) { showToast('No order id on flag'); return; }
+  const win = flag.closest('.win');
+  if (win) TradeAPI.setFromDom(win);
+  if (confirm('Cancel order #' + id + '?')) TradeAPI.cancelOne(id);
+});
 
 // ===== HypeScalp ≥ MetaScalp control layer =====
 window.HS = {
@@ -1767,5 +1807,55 @@ const _oldConnect = window.__hsConnectPatched;
   setTimeout(connect, 400);
 })();
 </script>
+
+<script>
+// Screener filter chips
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip) return;
+  const bar = chip.parentElement;
+  if (!bar || !bar.classList.contains('wl-filters')) return;
+  bar.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  const mode = (chip.textContent || '').trim().toLowerCase();
+  const table = bar.parentElement.querySelector('.wl-table');
+  if (!table) return;
+  const rows = [...table.querySelectorAll('.wl-row')];
+  rows.forEach(r => { r.style.display = ''; });
+  if (mode === 'hot') {
+    rows.forEach(r => {
+      const f = r.querySelector('.flag');
+      r.style.display = (f && (f.classList.contains('hot') || f.classList.contains('pump'))) ? '' : 'none';
+    });
+  } else if (mode === 'vol↑' || mode === 'vol↑' || mode.includes('vol')) {
+    rows.sort((a, b) => {
+      const va = parseFloat((a.textContent.match(/([\d.]+)[MB]/) || [])[1] || 0);
+      const vb = parseFloat((b.textContent.match(/([\d.]+)[MB]/) || [])[1] || 0);
+      return vb - va;
+    });
+    rows.forEach(r => table.appendChild(r));
+  } else if (mode.includes('Δ') || mode.includes('1s')) {
+    rows.sort((a, b) => {
+      const ca = parseFloat((a.querySelector('.chg') || a).textContent) || 0;
+      const cb = parseFloat((b.querySelector('.chg') || b).textContent) || 0;
+      return Math.abs(cb) - Math.abs(ca);
+    });
+    rows.forEach(r => table.appendChild(r));
+  }
+  showToast('Screener · ' + chip.textContent);
+});
+
+// Double-click screener row → open DOM
+document.addEventListener('dblclick', e => {
+  const row = e.target.closest('.wl-row');
+  if (!row) return;
+  const sym = row.querySelector('.sym')?.textContent?.trim();
+  const ex = row.querySelector('.ex')?.textContent?.trim() || 'BINANCE';
+  if (!sym) return;
+  createDOMWindow(sym, ex.toUpperCase(), (window.HS && HS.linkGroup) || 1);
+  showToast('DOM · ' + sym);
+});
+</script>
+
 </body>
 </html>

@@ -21,16 +21,17 @@ public static class TradingEndpoints
             });
         });
 
-        g.MapPost("/market", async (TradeRequest req, TradingService trading) =>
+        g.MapPost("/market", async (TradeRequest req, TradingService trading, AccountDataCache cache) =>
         {
             if (!TrySide(req.Side, out var side))
                 return Results.BadRequest(new { ok = false, message = "side must be buy|sell" });
             var ex = ParseEx(req.Exchange);
             var r = await trading.PlaceMarketAsync(req.Symbol, side, req.Quantity, ex);
+            if (r.Ok) cache.Invalidate();
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
-        g.MapPost("/limit", async (TradeRequest req, TradingService trading) =>
+        g.MapPost("/limit", async (TradeRequest req, TradingService trading, AccountDataCache cache) =>
         {
             if (!TrySide(req.Side, out var side))
                 return Results.BadRequest(new { ok = false, message = "side must be buy|sell" });
@@ -38,36 +39,40 @@ public static class TradingEndpoints
                 return Results.BadRequest(new { ok = false, message = "price required for limit" });
             var ex = ParseEx(req.Exchange);
             var r = await trading.PlaceLimitAsync(req.Symbol, side, req.Quantity, req.Price.Value, ex);
+            if (r.Ok) cache.Invalidate();
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
-        g.MapPost("/cancel-all", async (TradeRequest req, TradingService trading) =>
+        g.MapPost("/cancel-all", async (TradeRequest req, TradingService trading, AccountDataCache cache) =>
         {
             var r = await trading.CancelAllAsync(req.Symbol, ParseEx(req.Exchange));
+            if (r.Ok) cache.Invalidate();
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
-        g.MapPost("/cancel", async (CancelRequest req, TradingService trading) =>
+        g.MapPost("/cancel", async (CancelRequest req, TradingService trading, AccountDataCache cache) =>
         {
             var r = await trading.CancelOrderAsync(req.Symbol, req.OrderId, ParseEx(req.Exchange));
+            if (r.Ok) cache.Invalidate();
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
-        g.MapPost("/flatten", async (TradeRequest req, TradingService trading) =>
+        g.MapPost("/flatten", async (TradeRequest req, TradingService trading, AccountDataCache cache) =>
         {
             var r = await trading.FlattenAsync(req.Symbol, ParseEx(req.Exchange));
+            if (r.Ok) cache.Invalidate();
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
-        g.MapGet("/positions", async (string? exchange, TradingService trading) =>
+        g.MapGet("/positions", async (string? exchange, bool? force, AccountDataCache cache) =>
         {
-            var list = await trading.GetPositionsAsync(ParseEx(exchange));
+            var list = await cache.GetPositionsAsync(force == true, ParseEx(exchange));
             return Results.Ok(list);
         });
 
-        g.MapGet("/orders", async (string? symbol, string? exchange, TradingService trading) =>
+        g.MapGet("/orders", async (string? symbol, string? exchange, bool? force, AccountDataCache cache) =>
         {
-            var list = await trading.GetOpenOrdersAsync(symbol, ParseEx(exchange));
+            var list = await cache.GetOpenOrdersAsync(symbol, force == true, ParseEx(exchange));
             return Results.Ok(list);
         });
     }
