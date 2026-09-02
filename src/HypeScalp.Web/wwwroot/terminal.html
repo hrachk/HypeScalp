@@ -580,16 +580,51 @@
     display: flex; align-items: center; gap: 8px;
   }
   .new-menu-item:hover { background: rgba(0,245,212,0.1); color: var(--cyan); }
+
+  .ws-tab.add { min-width: 28px; color: var(--cyan); font-weight: 700; }
+  .dom-meta {
+    display:flex; gap:8px; padding:4px 8px; border-bottom:1px solid var(--border);
+    font-size:10px; font-family:var(--mono); color:var(--text-dim); flex-wrap:wrap;
+  }
+  .dom-meta b { color: var(--text); }
+  .dom-meta .mark { color: var(--orange); }
+  .dom-meta .fund { color: var(--purple); }
+  .link-badge {
+    font-size:9px; padding:1px 6px; border-radius:3px; margin-left:4px;
+    border:1px solid; cursor:pointer;
+  }
+  .density-legend { font-size:9px; color:var(--text-muted); padding:2px 8px; }
+  .level.density1 .price { outline: 1px solid rgba(255,159,28,0.7); }
+  .level.density2 .price { outline: 1px solid rgba(255,46,99,0.85); font-weight:700; }
+  .hs-modal {
+    position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000;
+    display:none; align-items:center; justify-content:center;
+  }
+  .hs-modal.show { display:flex; }
+  .hs-modal-box {
+    width:420px; max-width:94vw; background:var(--bg-panel); border:1px solid var(--border-bright);
+    border-radius:10px; padding:16px; box-shadow:0 16px 48px rgba(0,0,0,0.5);
+  }
+  .hs-modal-box h3 { margin-bottom:12px; font-size:14px; }
+  .hs-modal-box label { display:block; font-size:11px; color:var(--text-muted); margin:8px 0 4px; }
+  .hs-modal-box input, .hs-modal-box select {
+    width:100%; padding:7px 10px; border-radius:6px; border:1px solid var(--border);
+    background:rgba(255,255,255,0.04); color:var(--text); font-family:var(--mono); font-size:12px;
+  }
+  .hs-modal-actions { display:flex; gap:8px; margin-top:14px; justify-content:flex-end; }
+
 </style>
 </head>
 <body>
 
 <div class="topbar">
   <div class="logo">HYPE<span>SCALP</span><span class="badge">PRO · .NET</span></div>
-  <div class="workspace-tabs">
-    <div class="ws-tab active">Scalp BTC</div>
-    <div class="ws-tab">Alts Heat</div>
-    <div class="ws-tab">Listing</div>
+  <div class="workspace-tabs" id="wsTabs">
+    <div class="ws-tab active" data-ws="0">Scalp BTC</div>
+    <div class="ws-tab" data-ws="1">Multi DOM</div>
+    <div class="ws-tab" data-ws="2">Alts Heat</div>
+    <div class="ws-tab" data-ws="3">Listing</div>
+    <div class="ws-tab add" id="wsAdd" title="New workspace">+</div>
   </div>
   <div class="top-actions">
     <div class="conn-status"><div class="conn-dot"></div><span>12 exchanges</span></div>
@@ -605,13 +640,16 @@
 </div>
 
 <div class="new-menu" id="newMenu">
-  <div class="new-menu-item" data-type="chart">📈 Chart (any exchange)</div>
+  <div class="new-menu-item" data-type="chart">📈 Chart</div>
   <div class="new-menu-item" data-type="dom">📊 Order Book (DOM)</div>
+  <div class="new-menu-item" data-type="combo">⚡ Combo (DOM + Chart linked)</div>
   <div class="new-menu-item" data-type="multi">⧉ Multi-Exchange Monitor</div>
   <div class="new-menu-item" data-type="watchlist">👁 Screener / Watchlist</div>
   <div class="new-menu-item" data-type="positions">💼 Positions & Orders</div>
   <div class="new-menu-item" data-type="tape">📜 Global Tape</div>
+  <div class="new-menu-item" data-type="funding">💰 Funding / Mark / Index</div>
   <div class="new-menu-item" data-type="hotkeys">⌨️ Hotkeys</div>
+  <div class="new-menu-item" data-type="domsettings">⚙️ DOM Settings (density / clusters)</div>
 </div>
 
 <div class="workspace" id="workspace"></div>
@@ -622,6 +660,39 @@
   <div>Windows <span class="val" id="winCount">0</span></div>
   <div>Clusters <span class="val">1s</span></div>
   <div style="margin-left:auto">Drag windows by header · Resize from edges · Double-click header = maximize</div>
+</div>
+
+
+<div class="hs-modal" id="domSettingsModal">
+  <div class="hs-modal-box">
+    <h3>DOM Settings · MetaScalp parity</h3>
+    <label>Large density threshold 1 (USD)</label>
+    <input id="cfgDense1" type="number" value="25000" />
+    <label>Large density threshold 2 (USD)</label>
+    <input id="cfgDense2" type="number" value="100000" />
+    <label>Cluster timeframe</label>
+    <select id="cfgClusterTf">
+      <option value="1s">1s (scalp)</option>
+      <option value="M1">1m</option>
+      <option value="M5">5m</option>
+      <option value="M15">15m</option>
+      <option value="M30">30m</option>
+      <option value="H1">1H</option>
+      <option value="D1">1D</option>
+    </select>
+    <label>Size display</label>
+    <select id="cfgSizeType">
+      <option value="coin">Coin</option>
+      <option value="usd">USD</option>
+    </select>
+    <label>Working volumes (5 slots, coin)</label>
+    <input id="cfgVols" value="0.01, 0.05, 0.1, 0.5, 1" />
+    <label><input type="checkbox" id="cfgSound" checked /> Sound on large trade / density</label>
+    <div class="hs-modal-actions">
+      <button class="btn" id="cfgCancel">Cancel</button>
+      <button class="btn primary" id="cfgSave">Apply</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -985,11 +1056,18 @@ function createDOMWindow(pair = 'BTCUSDT', exchange = 'BINANCE', linkId = 1) {
       <div class="ladder-col" data-role="ladder">${renderLadderHTML(mid)}</div>
       <div class="tape-col" data-role="tape">${renderTapeHTML()}</div>
     </div>
+    <div class="dom-meta">
+      <span>Mark <b class="mark">—</b></span>
+      <span>Idx <b>—</b></span>
+      <span>Fund <b class="fund">—</b></span>
+      <span>Link <span class="link-badge" style="border-color:${linkColor};color:${linkColor}">#${linkId}</span></span>
+    </div>
     <div class="dom-footer">
       <button class="vol-btn active">0.01</button>
       <button class="vol-btn">0.05</button>
       <button class="vol-btn">0.1</button>
       <button class="vol-btn">0.5</button>
+      <button class="vol-btn">1</button>
       <button class="trade-btn buy">BUY</button>
       <button class="trade-btn sell">SELL</button>
       <div class="pos-info">
@@ -1198,11 +1276,14 @@ newMenu.querySelectorAll('.new-menu-item').forEach(item => {
     const type = item.dataset.type;
     newMenu.classList.remove('show');
     if (type === 'chart') createChartWindow('BTCUSDT', 'BINANCE');
-    else if (type === 'dom') createDOMWindow('BTCUSDT', 'BINANCE', windows.size + 1);
+    else if (type === 'dom') createDOMWindow('BTCUSDT', 'BINANCE', (window.HS&&HS.linkGroup)||1);
+    else if (type === 'combo') createComboWindow('BTCUSDT', 'BINANCE');
     else if (type === 'multi') createChartWindow('BTCUSDT', 'MULTI', true);
     else if (type === 'watchlist') createWatchlistWindow();
     else if (type === 'positions') createPositionsWindow();
     else if (type === 'tape') createTapeWindow();
+    else if (type === 'funding') createFundingWindow();
+    else if (type === 'domsettings') openDomSettings();
     else if (type === 'hotkeys') createHotkeysWindow();
   });
 });
@@ -1243,15 +1324,125 @@ setInterval(() => {
   }
 }, 400);
 
-// Hotkeys
-document.addEventListener('keydown', e => {
-  if (e.code === 'Space') { e.preventDefault(); showToast('MARKET BUY'); }
-  if (e.code === 'KeyX') showToast('FLATTEN ALL');
-  if (e.code === 'KeyN') createChartWindow('BTCUSDT', 'BINANCE');
-  if (e.code === 'KeyD') createDOMWindow('BTCUSDT', 'BINANCE', windows.size + 1);
-  if (e.code === 'F1') showToast('Center all windows');
-  if (e.code === 'F2') showToast('Cancel all orders');
+// ===== HypeScalp ≥ MetaScalp control layer =====
+window.HS = {
+  linkGroup: 1,
+  dense1: 25000,
+  dense2: 100000,
+  clusterTf: '1s',
+  sizeType: 'coin',
+  vols: ['0.01','0.05','0.1','0.5','1'],
+  sound: true,
+  activeDom: null,
+};
+
+function beep() {
+  if (!window.HS.sound) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 880; g.gain.value = 0.05; o.start();
+    setTimeout(() => { o.stop(); ctx.close(); }, 80);
+  } catch {}
+}
+
+function centerAllDoms() {
+  document.querySelectorAll('.win[data-pair] .ladder-col, .win .ladder-col').forEach(col => {
+    const mid = col.querySelector('.level.mid');
+    if (mid) mid.scrollIntoView({ block: 'center' });
+  });
+  showToast('Center all DOMs (show_spread)');
+}
+
+function createComboWindow(pair = 'BTCUSDT', exchange = 'BINANCE') {
+  const link = window.HS.linkGroup;
+  createChartWindow(pair, exchange, false);
+  createDOMWindow(pair, exchange, link);
+  showToast(`Combo linked · group ${link} · ${pair}`);
+}
+
+function createFundingWindow() {
+  const body = `
+    <div style="padding:10px;font-family:var(--mono);font-size:11px;line-height:1.6">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="card-mini"><div style="color:var(--text-muted)">Mark</div><div class="mark" id="fundMark">—</div></div>
+        <div class="card-mini"><div style="color:var(--text-muted)">Index</div><div id="fundIndex">—</div></div>
+        <div class="card-mini"><div style="color:var(--text-muted)">Funding</div><div class="fund" id="fundRate">—</div></div>
+        <div class="card-mini"><div style="color:var(--text-muted)">Next funding</div><div id="fundNext">—</div></div>
+      </div>
+      <div style="margin-top:10px;color:var(--text-dim);font-size:10px">
+        MetaScalp parity: mark_price / index_price / funding streams.<br/>
+        Live wiring via exchange WS (Binance premiumIndex) — UI ready.
+      </div>
+    </div>`;
+  createWindow({ title: 'FUNDING · MARK · INDEX', type: 'funding', w: 320, h: 200, body });
+}
+
+function openDomSettings() {
+  document.getElementById('cfgDense1').value = HS.dense1;
+  document.getElementById('cfgDense2').value = HS.dense2;
+  document.getElementById('cfgClusterTf').value = HS.clusterTf;
+  document.getElementById('cfgSizeType').value = HS.sizeType;
+  document.getElementById('cfgVols').value = HS.vols.join(', ');
+  document.getElementById('cfgSound').checked = HS.sound;
+  document.getElementById('domSettingsModal').classList.add('show');
+}
+
+document.getElementById('cfgCancel')?.addEventListener('click', () => {
+  document.getElementById('domSettingsModal').classList.remove('show');
 });
+document.getElementById('cfgSave')?.addEventListener('click', () => {
+  HS.dense1 = +document.getElementById('cfgDense1').value || 25000;
+  HS.dense2 = +document.getElementById('cfgDense2').value || 100000;
+  HS.clusterTf = document.getElementById('cfgClusterTf').value;
+  HS.sizeType = document.getElementById('cfgSizeType').value;
+  HS.vols = document.getElementById('cfgVols').value.split(',').map(s => s.trim()).filter(Boolean);
+  HS.sound = document.getElementById('cfgSound').checked;
+  document.getElementById('clusterTf').textContent = HS.clusterTf;
+  document.getElementById('domSettingsModal').classList.remove('show');
+  // refresh vol buttons on active DOMs
+  document.querySelectorAll('.dom-footer').forEach(f => {
+    const btns = f.querySelectorAll('.vol-btn');
+    HS.vols.forEach((v, i) => { if (btns[i]) btns[i].textContent = v; });
+  });
+  showToast('DOM settings applied');
+});
+
+// Menu types
+document.getElementById('newMenu')?.addEventListener('click', e => {
+  const item = e.target.closest('.new-menu-item');
+  if (!item) return;
+  const type = item.dataset.type;
+  if (type === 'combo') createComboWindow('BTCUSDT', 'BINANCE');
+  if (type === 'funding') createFundingWindow();
+  if (type === 'domsettings') openDomSettings();
+});
+
+// Hotkeys — MetaScalp-like
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea, select')) return;
+  if (e.code === 'Space') { e.preventDefault(); showToast('MARKET BUY · active DOM'); beep(); }
+  if (e.code === 'KeyX') { showToast('FLATTEN ALL (close positions market)'); beep(); }
+  if (e.code === 'KeyC') { e.preventDefault(); centerAllDoms(); }
+  if (e.code === 'Escape') showToast('Cancel all limit orders (active)');
+  if (e.code === 'KeyN') createChartWindow('BTCUSDT', 'BINANCE');
+  if (e.code === 'KeyD') createDOMWindow('BTCUSDT', 'BINANCE', HS.linkGroup);
+  if (e.code === 'KeyO') createComboWindow('BTCUSDT', 'BINANCE');
+  if (e.code === 'Digit1') { HS.linkGroup = 1; document.getElementById('linkGroup').textContent = '1'; showToast('Link group 1'); }
+  if (e.code === 'Digit2') { HS.linkGroup = 2; document.getElementById('linkGroup').textContent = '2'; showToast('Link group 2'); }
+  if (e.code === 'Digit3') { HS.linkGroup = 3; document.getElementById('linkGroup').textContent = '3'; showToast('Link group 3'); }
+  if (e.code === 'F1') centerAllDoms();
+  if (e.code === 'F2') showToast('Cancel ALL limits (global)');
+  if (e.code === 'F3') showToast('Cancel ALL stops (global)');
+  if (e.code === 'KeyB') showToast('Limit BUY @ best bid');
+  if (e.code === 'KeyS') showToast('Limit SELL @ best ask');
+  if (e.code === 'KeyH') openDomSettings();
+});
+
+// Enhance SignalR feed status
+const _oldConnect = window.__hsConnectPatched;
+
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
@@ -1263,22 +1454,26 @@ document.addEventListener('keydown', e => {
 
   function renderLiveLadder(asks, bids, mid, spread) {
     let html = '';
-    const maxQ = Math.max(0.0001, ...asks.map(a => a.q), ...bids.map(b => b.q));
-    asks.slice().reverse().forEach(a => {
-      const w = Math.min(100, (a.q / maxQ) * 100);
-      html += `<div class="level ask ${a.wall ? 'wall' : ''}">
+    const maxQ = Math.max(0.0001, ...asks.map(a => +a.q || 0), ...bids.map(b => +b.q || 0));
+    const d1 = (window.HS && HS.dense1) || 25000;
+    const d2 = (window.HS && HS.dense2) || 100000;
+    const usd = (window.HS && HS.sizeType === 'usd');
+    function row(side, lvl) {
+      const q = +lvl.q || 0; const pr = +lvl.p || 0;
+      const notional = q * pr;
+      const dens = notional >= d2 ? 'density2' : notional >= d1 ? 'density1' : '';
+      const wall = lvl.wall ? 'wall' : '';
+      const w = Math.min(100, (q / maxQ) * 100);
+      const volTxt = usd ? (notional >= 1000 ? (notional/1000).toFixed(1)+'k' : notional.toFixed(0)) : q.toFixed(3);
+      if (notional >= d1) try { beep(); } catch {}
+      return `<div class="level ${side} ${wall} ${dens}">
         <div class="depth-bar" style="width:${w}%"></div>
-        <span class="price">${Number(a.p).toFixed(a.p >= 1000 ? 1 : 2)}</span>
-        <span class="vol">${Number(a.q).toFixed(3)}</span></div>`;
-    });
+        <span class="price">${pr.toFixed(pr >= 1000 ? 1 : 2)}</span>
+        <span class="vol">${volTxt}</span></div>`;
+    }
+    asks.slice().reverse().forEach(a => { html += row('ask', a); });
     html += `<div class="level mid"><span class="price">${Number(mid).toFixed(mid >= 1000 ? 1 : 2)}</span><span class="vol">${Number(spread).toFixed(2)}</span></div>`;
-    bids.forEach(b => {
-      const w = Math.min(100, (b.q / maxQ) * 100);
-      html += `<div class="level bid ${b.wall ? 'wall' : ''}">
-        <div class="depth-bar" style="width:${w}%"></div>
-        <span class="price">${Number(b.p).toFixed(b.p >= 1000 ? 1 : 2)}</span>
-        <span class="vol">${Number(b.q).toFixed(3)}</span></div>`;
-    });
+    bids.forEach(b => { html += row('bid', b); });
     return html;
   }
 
@@ -1319,11 +1514,11 @@ document.addEventListener('keydown', e => {
       conn.on('trade', applyTrade);
       await conn.start();
       console.log('[HypeScalp] SignalR connected');
-      showToast('Live feed connected');
+      showToast('Live feed connected'); const fs=document.getElementById('feedStatus'); if(fs){fs.textContent='LIVE'; fs.style.color='var(--lime)';}
       window.__hsHub = conn;
     } catch (e) {
       console.warn('[HypeScalp] SignalR failed, mock UI still works', e);
-      showToast('Offline mock · SignalR unavailable');
+      showToast('Offline mock · SignalR unavailable'); const fs=document.getElementById('feedStatus'); if(fs){fs.textContent='MOCK';}
     }
   }
 
