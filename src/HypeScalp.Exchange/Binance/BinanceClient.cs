@@ -172,6 +172,39 @@ public class BinanceClient : BaseExchangeClient
             .ToList();
     }
 
+
+    public async Task<Order> PlaceStopOrderAsync(string symbol, OrderSide side, decimal quantity, decimal stopPrice, bool takeProfit = false)
+    {
+        if (!_futures) throw new Exception("Stop orders via this path are futures-only");
+        var path = "/fapi/v1/order";
+        var p = new Dictionary<string, string>
+        {
+            ["symbol"] = symbol.ToUpperInvariant(),
+            ["side"] = side == OrderSide.Buy ? "BUY" : "SELL",
+            ["type"] = takeProfit ? "TAKE_PROFIT_MARKET" : "STOP_MARKET",
+            ["stopPrice"] = stopPrice.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["quantity"] = quantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
+        };
+        var qs = string.Join("&", p.Select(kv => $"{kv.Key}={kv.Value}"));
+        var content = new StringContent($"{qs}&signature={Sign(qs)}", Encoding.UTF8, "application/x-www-form-urlencoded");
+        var resp = await _http.PostAsync(path, content);
+        var body = await resp.Content.ReadAsStringAsync();
+        if (!resp.IsSuccessStatusCode) throw new Exception(body);
+        using var doc = JsonDocument.Parse(body);
+        return new Order
+        {
+            OrderId = doc.RootElement.GetProperty("orderId").GetRawText(),
+            Symbol = symbol,
+            Exchange = ExchangeType.Binance,
+            Side = side,
+            Type = OrderType.Limit,
+            Price = stopPrice,
+            Quantity = quantity,
+            Status = OrderStatus.New
+        };
+    }
+
     private string Sign(string payload)
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(Connection.ApiSecret));

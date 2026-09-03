@@ -129,6 +129,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:12
 .statusbar .v{color:var(--dim)}.statusbar .ok{color:var(--lime)}.statusbar .bad{color:var(--magenta)}
 .toast{position:fixed;bottom:40px;right:16px;background:var(--panel);border:1px solid rgba(0,245,212,.35);border-radius:8px;padding:10px 16px;font-size:12px;box-shadow:0 8px 32px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:.2s;z-index:9999;pointer-events:none;max-width:380px}
 .toast.show{opacity:1;transform:translateY(0)}
+
+.level .sl-mark,.lv .sl-mark{position:absolute;right:2px;top:0;bottom:0;font-size:8px;color:#ff9f1c;display:flex;align-items:center;z-index:3;pointer-events:none}
+.level .tp-mark,.lv .tp-mark{position:absolute;right:2px;top:0;bottom:0;font-size:8px;color:#a8ff3e;display:flex;align-items:center;z-index:3;pointer-events:none}
+.mode-bar{display:flex;gap:4px;padding:3px 6px;border-bottom:1px solid var(--border);font-size:10px;background:rgba(0,0,0,.25)}
+.mode-btn{padding:2px 8px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--dim);cursor:pointer;font-size:10px}
+.mode-btn.on{border-color:var(--orange);color:var(--orange);background:rgba(255,159,28,.12)}
+.mode-btn.tp.on{border-color:var(--lime);color:var(--lime);background:rgba(168,255,62,.1)}
+
+
+.cl-cell{height:17px;display:flex;align-items:center;justify-content:center;font-size:9px;font-family:var(--mono)}
+.cl-cell.b{color:var(--lime);background:rgba(168,255,62,.06)}
+.cl-cell.s{color:var(--magenta);background:rgba(255,46,99,.06)}
+.cl-cell.z{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -336,6 +349,17 @@ const Trade={
       if(r.ok) this.pullAccount(true);
     }catch(e){showToast('ERR: '+e.message)} finally{this.busy=false}
   },
+  async stop(side, price, takeProfit){
+    if(this.busy)return; this.busy=true;
+    try{
+      const r=await this.post('stop',{symbol:this.symbol,exchange:this.exchange,side,quantity:this.qty,stopPrice:Number(price),takeProfit:!!takeProfit});
+      const msg=r.data.message||r.data.Message||(takeProfit?'TP':'SL');
+      showToast(r.ok?msg:('ERR: '+(r.data.message||r.data.Message||'fail')));
+      if(r.ok) this.pullAccount(true);
+    }catch(e){showToast('ERR: '+e.message)} finally{this.busy=false}
+  },
+  mode: 'limit', // limit | sl | tp
+,
   async cancelAll(){
     if(this.busy)return; this.busy=true;
     try{
@@ -366,6 +390,84 @@ const Trade={
 };
 
 /* ===== Chart window ===== */
+
+
+/* ===== Cluster engine (TF buckets) ===== */
+const ClusterEngine = {
+  // key: SYM -> { tfMs, buckets: Map(timeBucket -> Map(priceKey -> {buy,sell})) }
+  state: {},
+  tfMs: { '1s':1000,'M1':60000,'M5':300000,'M15':900000,'H1':3600000 },
+  currentTf: 'M1',
+  priceStep(sym, mid){
+    if(mid>=1000) return 1;
+    if(mid>=100) return 0.1;
+    if(mid>=1) return 0.01;
+    return 0.0001;
+  },
+  roundPrice(p, step){ return Math.round(p/step)*step; },
+  onTrade(sym, price, qty, buy, mid){
+    const key = norm(sym);
+    if(!this.state[key]) this.state[key] = { buckets: new Map() };
+    const st = this.state[key];
+    const tf = this.tfMs[this.currentTf] || 60000;
+    const tb = Math.floor(Date.now()/tf)*tf;
+    if(!st.buckets.has(tb)) st.buckets.set(tb, new Map());
+    const step = this.priceStep(sym, mid||price);
+    const pk = this.roundPrice(price, step);
+    const m = st.buckets.get(tb);
+    if(!m.has(pk)) m.set(pk, {buy:0,sell:0});
+    const cell = m.get(pk);
+    if(buy) cell.buy += qty; else cell.sell += qty;
+    // keep last 8 time buckets
+    const keys = [...st.buckets.keys()].sort((a,b)=>a-b);
+    while(keys.length>8){ st.buckets.delete(keys.shift()); }
+  },
+  renderColumn(sym, priceLevels){
+    // priceLevels: array of prices top to bottom matching ladder rows
+    const key = norm(sym);
+    const st = this.state[key];
+    if(!st || !st.buckets.size) return priceLevels.map(()=>'<div class="cl-cell z"></div>').join('');
+    const lastTb = Math.max(...st.buckets.keys());
+    const m = st.buckets.get(lastTb) || new Map();
+    return priceLevels.map(pr=>{
+      const step = this.priceStep(sym, pr);
+      const pk = this.roundPrice(pr, step);
+      // find nearest
+      let cell = m.get(pk);
+      if(!cell){
+        for(const [k,v] of m){ if(Math.abs(k-pr)<=step*1.01){ cell=v; break; } }
+      }
+      if(!cell || (cell.buy+cell.sell)<=0) return '<div class="cl-cell z"></div>';
+      const delta = cell.buy - cell.sell;
+      const tot = cell.buy + cell.sell;
+      const cls = delta>=0 ? 'b' : 's';
+      const txt = tot>=10 ? tot.toFixed(0) : tot.toFixed(2);
+      return `<div class="cl-cell ${cls}" title="Δ ${delta.toFixed(3)}">${txt}</div>`;
+    }).join('');
+  }
+};
+
+/* ===== Real Binance klines ===== */
+async function loadKlines(sym, interval='1m', limit=200){
+  const s = (sym||'BTCUSDT').replace(/[-_]/g,'').toUpperCase();
+  const urls = [
+    `https://fapi.binance.com/fapi/v1/klines?symbol=${s}&interval=${interval}&limit=${limit}`,
+    `https://api.binance.com/api/v3/klines?symbol=${s}&interval=${interval}&limit=${limit}`
+  ];
+  for(const url of urls){
+    try{
+      const res = await fetch(url);
+      if(!res.ok) continue;
+      const raw = await res.json();
+      return raw.map(k=>({
+        time: Math.floor(k[0]/1000),
+        open: +k[1], high: +k[2], low: +k[3], close: +k[4]
+      }));
+    }catch{}
+  }
+  return null;
+}
+
 function createChartWindow(sym='BTCUSDT', ex='Binance', x=250, y=10){
   const win=createWin({
     id:'chart-'+sym+'-'+Math.random().toString(36).slice(2,5),
@@ -396,16 +498,19 @@ function createChartWindow(sym='BTCUSDT', ex='Binance', x=250, y=10){
         upColor:'#00f5d4', downColor:'#ff2e63', borderUpColor:'#00f5d4', borderDownColor:'#ff2e63',
         wickUpColor:'#00f5d4', wickDownColor:'#ff2e63'
       });
-      // synthetic candles until real kline feed
-      let t=Math.floor(Date.now()/1000)-60*120;
-      let price=sym.startsWith('BTC')?64000:sym.startsWith('ETH')?3200:150;
-      const data=[];
-      for(let i=0;i<120;i++){
-        const o=price, c=price+(Math.random()-0.48)*price*0.004;
-        const h=Math.max(o,c)*(1+Math.random()*0.0015), l=Math.min(o,c)*(1-Math.random()*0.0015);
-        data.push({time:t,open:o,high:h,low:l,close:c}); price=c; t+=60;
-      }
-      series.setData(data);
+      // real klines
+      el._interval = '1m';
+      el._data = [];
+      (async ()=>{
+        const kl = await loadKlines(sym, el._interval, 200);
+        if(kl && kl.length){ el._data = kl; series.setData(kl); el._last = kl[kl.length-1].close; }
+        else {
+          let t0=Math.floor(Date.now()/1000)-60*120, price=sym.startsWith('BTC')?64000:3200;
+          for(let i=0;i<120;i++){const o=price,c=price+(Math.random()-0.48)*price*0.004;const h=Math.max(o,c)*1.001,l=Math.min(o,c)*0.999;el._data.push({time:t0,open:o,high:h,low:l,close:c});price=c;t0+=60}
+          series.setData(el._data);
+        }
+      })();
+      // series.setData filled async
       el._chart=chart; el._series=series; el._last=price;
       el._onResize=()=>{chart.applyOptions({width:host.clientWidth,height:host.clientHeight})};
       // live tick from mid
@@ -426,7 +531,12 @@ function createChartWindow(sym='BTCUSDT', ex='Binance', x=250, y=10){
         b.onclick=()=>{
           el.querySelectorAll('.tf').forEach(x=>x.classList.remove('active'));
           b.classList.add('active');
-          showToast('Timeframe '+b.dataset.tf+' · kline feed next');
+          el._interval = b.dataset.tf;
+          (async()=>{
+            const kl = await loadKlines(sym, el._interval, 200);
+            if(kl&&kl.length&&el._series){ el._data=kl; el._series.setData(kl); showToast('Klines '+el._interval+' · '+kl.length); }
+            else showToast('Kline load failed');
+          })();
         };
       });
       setTimeout(()=>el._onResize(),50);
@@ -471,11 +581,35 @@ function createDomWindow(sym='BTCUSDT', ex='Binance', x=20, y=10){
       });
       el.querySelector('.tbtn.buy').onclick=()=>{Trade.setContext(sym,ex);Trade.market('buy')};
       el.querySelector('.tbtn.sell').onclick=()=>{Trade.setContext(sym,ex);Trade.market('sell')};
+      el.querySelectorAll('.mode-btn').forEach(b=>{
+        b.onclick=()=>{
+          el.querySelectorAll('.mode-btn').forEach(x=>x.classList.remove('on'));
+          b.classList.add('on');
+          Trade.mode = b.dataset.mode;
+          showToast('Mode: '+(Trade.mode||'limit').toUpperCase());
+        };
+      });
       el.querySelector('.ladder').onclick=e=>{
         const lvl=e.target.closest('.level'); if(!lvl||lvl.classList.contains('mid')) return;
         const price=lvl.querySelector('.price')?.textContent; if(!price) return;
         Trade.setContext(sym,ex);
-        Trade.limit(lvl.classList.contains('ask')?'sell':'buy', price);
+        let mode = Trade.mode || 'limit';
+        if(e.shiftKey) mode = 'sl';
+        if(e.altKey) mode = 'tp';
+        // SL: sell stop below for long exit; TP: sell at higher for long — side from level
+        const isAsk = lvl.classList.contains('ask');
+        if(mode==='limit'){
+          Trade.limit(isAsk?'sell':'buy', price);
+        } else if(mode==='sl'){
+          // stop market: if click ask zone → buy stop; bid zone → sell stop (classic)
+          const side = isAsk ? 'buy' : 'sell';
+          Trade.stop(side, price, false);
+          lvl.insertAdjacentHTML('beforeend', '<span class="sl-mark">SL</span>');
+        } else if(mode==='tp'){
+          const side = isAsk ? 'sell' : 'buy';
+          Trade.stop(side, price, true);
+          lvl.insertAdjacentHTML('beforeend', '<span class="tp-mark">TP</span>');
+        }
       };
       el.addEventListener('mousedown',()=>Trade.setContext(sym,ex));
     }
@@ -596,6 +730,14 @@ function applyBook(msg){
     if(msg.exchange && norm(win.dataset.ex)!==norm(msg.exchange)) return;
     const ladder=win.querySelector('.ladder');
     if(ladder) ladder.innerHTML=renderLadder(msg.asks||[],msg.bids||[],msg.mid,msg.spread||0);
+    const clusters=win.querySelector('.clusters');
+    if(clusters && typeof ClusterEngine!=='undefined'){
+      const prices=[];
+      (msg.asks||[]).slice().reverse().forEach(a=>prices.push(+a.p));
+      prices.push(+msg.mid);
+      (msg.bids||[]).forEach(b=>prices.push(+b.p));
+      clusters.innerHTML=ClusterEngine.renderColumn(msg.symbol, prices);
+    }
     const sp=win.querySelector('.sp'); if(sp) sp.textContent=Number(msg.spread||0).toFixed(2);
     const live=win.querySelector('.live-tag'); if(live){live.textContent='LIVE';live.style.color='var(--lime)'}
     paintFlags();
@@ -609,6 +751,8 @@ function applyBook(msg){
   $('stFeed').textContent='LIVE'; $('stFeed').className='v ok';
 }
 function applyTrade(msg){
+  try{ ClusterEngine.onTrade(msg.symbol, +msg.price, +msg.qty, !!msg.buy, +msg.price); }catch{}
+
   document.querySelectorAll('.win[data-kind="dom"]').forEach(win=>{
     if(norm(win.dataset.sym)!==norm(msg.symbol)) return;
     const tape=win.querySelector('.tape'); if(!tape) return;
@@ -728,3 +872,11 @@ setInterval(()=>{ if(Trade.ready) Trade.pullAccount(false); },12000);
 </script>
 </body>
 </html>
+
+<script>
+document.addEventListener('change', e=>{
+  if(e.target && (e.target.id==='cfgClusterTf' || e.target.id==='cTf')){
+    if(typeof ClusterEngine!=='undefined'){ ClusterEngine.currentTf = e.target.value; showToast('Cluster TF '+e.target.value); }
+  }
+});
+</script>

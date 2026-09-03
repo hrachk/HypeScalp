@@ -57,6 +57,17 @@ public static class TradingEndpoints
             return r.Ok ? Results.Ok(r) : Results.BadRequest(r);
         });
 
+        g.MapPost("/stop", async (StopRequest req, TradingService trading, AccountDataCache cache) =>
+        {
+            if (!TrySide(req.Side, out var side))
+                return Results.BadRequest(new { ok = false, message = "side must be buy|sell" });
+            if (req.StopPrice <= 0)
+                return Results.BadRequest(new { ok = false, message = "stopPrice required" });
+            var r = await trading.PlaceStopAsync(req.Symbol, side, req.Quantity, req.StopPrice, req.TakeProfit, ParseEx(req.Exchange));
+            if (r.IsOk) cache.Invalidate();
+            return r.IsOk ? Results.Ok(r) : Results.BadRequest(r);
+        });
+
         g.MapPost("/flatten", async (TradeRequest req, TradingService trading, AccountDataCache cache) =>
         {
             var r = await trading.FlattenAsync(req.Symbol, ParseEx(req.Exchange));
@@ -112,6 +123,16 @@ public static class TradingEndpoints
         public string Side { get; set; } = "buy";
         public decimal Quantity { get; set; } = 0.01m;
         public decimal? Price { get; set; }
+        public string? Exchange { get; set; }
+    }
+
+    public sealed class StopRequest
+    {
+        public string Symbol { get; set; } = "BTCUSDT";
+        public string Side { get; set; } = "sell";
+        public decimal Quantity { get; set; } = 0.01m;
+        public decimal StopPrice { get; set; }
+        public bool TakeProfit { get; set; }
         public string? Exchange { get; set; }
     }
 

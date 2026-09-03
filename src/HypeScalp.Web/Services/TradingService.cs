@@ -142,6 +142,33 @@ public class TradingService
         }
     }
 
+
+    /// <summary>STOP_MARKET or TAKE_PROFIT_MARKET (Binance futures).</summary>
+    public async Task<TradeResult> PlaceStopAsync(string symbol, OrderSide side, decimal quantity, decimal stopPrice, bool takeProfit = false, ExchangeType? exchange = null)
+    {
+        var client = ResolveClient(exchange);
+        if (client == null)
+            return TradeResult.Fail("NO_CONNECTION", "No connected exchange.");
+        if (quantity <= 0 || stopPrice <= 0)
+            return TradeResult.Fail("BAD_ARGS", "Quantity and stopPrice must be > 0");
+        try
+        {
+            // Use limit as fallback for non-Binance; BinanceClient handles via PlaceOrderAsync with special type later
+            Order order;
+            if (client is HypeScalp.Exchange.Binance.BinanceClient bin)
+                order = await bin.PlaceStopOrderAsync(NormalizeSymbol(client.Exchange, symbol), side, quantity, stopPrice, takeProfit);
+            else
+                order = await client.PlaceOrderAsync(NormalizeSymbol(client.Exchange, symbol), side, OrderType.Limit, quantity, stopPrice);
+            _log.LogInformation("STOP/TP {Side} {Qty} @ {Price} TP={Tp}", side, quantity, stopPrice, takeProfit);
+            OnOrdersChanged?.Invoke();
+            return TradeResult.Success($"{(takeProfit ? "TP" : "SL")} {side} {quantity} @ {stopPrice}", order, client.Exchange);
+        }
+        catch (Exception ex)
+        {
+            return TradeResult.Fail("EXCHANGE", ex.Message);
+        }
+    }
+
     public async Task<TradeResult> FlattenAsync(string symbol, ExchangeType? exchange = null)
     {
         var client = ResolveClient(exchange);
