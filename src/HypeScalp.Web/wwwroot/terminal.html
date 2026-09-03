@@ -359,7 +359,6 @@ const Trade={
     }catch(e){showToast('ERR: '+e.message)} finally{this.busy=false}
   },
   mode: 'limit', // limit | sl | tp
-,
   async cancelAll(){
     if(this.busy)return; this.busy=true;
     try{
