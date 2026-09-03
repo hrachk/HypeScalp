@@ -34,6 +34,12 @@ public class MarketBroadcastService : IHostedService
                 await _market.SubscribeAsync(ExchangeType.Bybit, "ETHUSDT", true);
                 await _market.SubscribeAsync(ExchangeType.Gate, "BTC_USDT", true);
                 await _market.SubscribeAsync(ExchangeType.Okx, "BTC-USDT", true);
+                await _market.SubscribeAsync(ExchangeType.Binance, "SOLUSDT", true);
+                await _market.SubscribeAsync(ExchangeType.Binance, "BNBUSDT", true);
+                await _market.SubscribeAsync(ExchangeType.Binance, "XRPUSDT", true);
+                await _market.SubscribeAsync(ExchangeType.Binance, "DOGEUSDT", true);
+                await _market.SubscribeAsync(ExchangeType.Binance, "AVAXUSDT", true);
+                await _market.SubscribeAsync(ExchangeType.Binance, "LTCUSDT", true);
             }
             catch (Exception ex)
             {

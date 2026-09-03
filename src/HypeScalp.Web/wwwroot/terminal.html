@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>HypeScalp — Terminal</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="/css/hype.css"/>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 :root {
@@ -53,6 +54,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:12
 .win{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:8px;
   display:flex;flex-direction:column;min-width:260px;min-height:180px;box-shadow:0 8px 28px rgba(0,0,0,.45);overflow:hidden;z-index:10}
 .win.active{border-color:rgba(0,245,212,.45);z-index:40}
+.win.minimized{height:30px!important;overflow:hidden}
+.win.minimized{height:30px!important;overflow:hidden}
 .win-header{height:30px;background:var(--header);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 6px 0 8px;gap:4px;cursor:grab}
 .win-title{font-size:11px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .win-title .tag{font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(0,245,212,.12);color:var(--cyan)}
@@ -132,6 +135,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:12
 
 <div class="topbar">
   <div class="logo">HYPE<span>SCALP</span><span class="badge">TERMINAL</span></div>
+  <!-- Workspace tabs -->
+  <div class="ws-tabs" style="display:flex;gap:2px;padding:0 4px;border-left:1px solid var(--border);border-right:1px solid var(--border);margin:0 2px">
+    <button class="ws-tab active" data-ws="scalp" style="height:26px;padding:0 10px;border-radius:5px;border:none;background:rgba(0,245,212,.1);color:var(--cyan);font-size:11px;cursor:pointer;font-family:var(--font)">Scalp</button>
+    <button class="ws-tab" data-ws="multi" style="height:26px;padding:0 10px;border-radius:5px;border:none;background:transparent;color:var(--dim);font-size:11px;cursor:pointer;font-family:var(--font)">Multi DOM</button>
+    <button class="ws-tab" data-ws="alts" style="height:26px;padding:0 10px;border-radius:5px;border:none;background:transparent;color:var(--dim);font-size:11px;cursor:pointer;font-family:var(--font)">Alts</button>
+    <button class="ws-tab" data-ws="listing" style="height:26px;padding:0 10px;border-radius:5px;border:none;background:transparent;color:var(--dim);font-size:11px;cursor:pointer;font-family:var(--font)">Listing</button>
+  </div>
   <div class="sep"></div>
 
   <div class="menu-wrap">
@@ -231,6 +241,7 @@ function createWin({id,title,x,y,w,h,bodyHtml,onReady}){
       <div class="win-title">${title}</div>
       <div class="win-tools">
         <button class="win-btn" data-act="instrument" title="Change instrument">⚙</button>
+        <button class="win-btn min" title="Minimize" style="font-size:10px">─</button>
         <button class="win-btn close" title="Close">✕</button>
       </div>
     </div>
@@ -243,6 +254,21 @@ function createWin({id,title,x,y,w,h,bodyHtml,onReady}){
     el.classList.add('active'); el.style.zIndex=++zTop;
   });
 
+  // drag + resize
+  const resizeHandle = el.querySelector('.win-resize');
+  if (resizeHandle) {
+    let rsz = null;
+    resizeHandle.addEventListener('mousedown', e => {
+      rsz = { sx: e.clientX, sy: e.clientY, sw: el.offsetWidth, sh: el.offsetHeight };
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!rsz) return;
+      el.style.width  = Math.max(260, rsz.sw + e.clientX - rsz.sx) + 'px';
+      el.style.height = Math.max(180, rsz.sh + e.clientY - rsz.sy) + 'px';
+    });
+    document.addEventListener('mouseup', () => { rsz = null; });
+  }
   // drag
   const header=el.querySelector('.win-header');
   header.addEventListener('mousedown',e=>{
@@ -264,6 +290,9 @@ function createWin({id,title,x,y,w,h,bodyHtml,onReady}){
   });
 
   el.querySelector('.win-btn.close').onclick=()=>{ if(el._chart) try{el._chart.remove()}catch{}; el.remove(); };
+  // Minimize
+  const minBtn = el.querySelector('.win-btn.min');
+  if (minBtn) minBtn.onclick = () => { el.classList.toggle('minimized'); };
   el.querySelector('[data-act="instrument"]').onclick=()=>openInstrumentDialog(el);
 
   if(onReady) onReady(el);
